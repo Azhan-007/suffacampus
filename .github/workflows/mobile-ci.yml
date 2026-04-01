@@ -1,0 +1,20 @@
+name: Mobile CI
+
+on:
+  push:
+    paths:
+      - "apps/educonnect-mobile/**"
+  pull_request:
+    paths:
+      - "apps/educonnect-mobile/**"
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/educonnect-mobile
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install
+      - run: npx tsc --noEmit

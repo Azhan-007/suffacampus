@@ -1,0 +1,74 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/backend/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deployment environment"
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+
+defaults:
+  run:
+    working-directory: apps/backend
+
+concurrency:
+  group: deploy-backend-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment || 'production' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Run smoke tests
+        run: npm run test:unit -- --ci --forceExit
+        env:
+          NODE_ENV: test
+
+      # --- Google Cloud Run deployment ---
+      - name: Authenticate to Google Cloud
+        if: vars.DEPLOY_TARGET == 'cloud-run'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Deploy to Cloud Run
+        if: vars.DEPLOY_TARGET == 'cloud-run'
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: educonnect-api
+          region: ${{ vars.GCP_REGION || 'asia-south1' }}
+          source: apps/backend
+          env_vars: |
+            NODE_ENV=production
+            COMMIT_SHA=${{ github.sha }}
+            APP_VERSION=${{ github.ref_name }}
+
+      # --- Railway deployment (alternative) ---
+      - name: Deploy to Railway
+        if: vars.DEPLOY_TARGET == 'railway'
+        uses: bervProject/railway-deploy@main
+        with:
+          railway_token: ${{ secrets.RAILWAY_TOKEN }}
+          service: educonnect-backend

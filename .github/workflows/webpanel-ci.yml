@@ -1,0 +1,20 @@
+name: Web Panel CI
+
+on:
+  push:
+    paths:
+      - "apps/educonnect-webpanel/**"
+  pull_request:
+    paths:
+      - "apps/educonnect-webpanel/**"
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/educonnect-webpanel
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install
+      - run: npx tsc --noEmit
