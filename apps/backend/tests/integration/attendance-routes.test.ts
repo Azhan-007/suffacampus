@@ -32,7 +32,7 @@ jest.mock("../../src/lib/prisma", () => ({
         if (!select) return row;
         const selected: Record<string, unknown> = {};
         for (const key of Object.keys(select)) {
-          if (select[key]) selected[key] = row[key];
+          if (select[key]) selected[key] = (row as any)[key];
         }
         return selected;
       }),

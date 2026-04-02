@@ -178,7 +178,7 @@ jest.mock("../../src/lib/prisma", () => ({
         if (!select) return row;
         const selected: Record<string, unknown> = {};
         for (const key of Object.keys(select)) {
-          if (select[key]) selected[key] = row[key];
+          if (select[key]) selected[key] = (row as any)[key];
         }
         return selected;
       }),
@@ -240,8 +240,8 @@ jest.mock("../../src/lib/prisma", () => ({
         const sortBy = Object.keys(orderBy ?? {})[0] ?? "studentName";
         const sortOrder = (orderBy?.[sortBy] ?? "asc") as "asc" | "desc";
         rows = rows.sort((x, y) => {
-          const lhs = x[sortBy];
-          const rhs = y[sortBy];
+          const lhs = (x as any)[sortBy];
+          const rhs = (y as any)[sortBy];
           if (lhs === rhs) return 0;
           if (sortOrder === "asc") return lhs > rhs ? 1 : -1;
           return lhs < rhs ? 1 : -1;
@@ -286,8 +286,8 @@ jest.mock("../../src/lib/prisma", () => ({
         const sortBy = Object.keys(orderBy ?? {})[0] ?? "createdAt";
         const sortOrder = (orderBy?.[sortBy] ?? "desc") as "asc" | "desc";
         rows = rows.sort((a, b) => {
-          const lhs = a[sortBy];
-          const rhs = b[sortBy];
+          const lhs = (a as any)[sortBy];
+          const rhs = (b as any)[sortBy];
           if (lhs === rhs) return 0;
           if (sortOrder === "asc") return lhs > rhs ? 1 : -1;
           return lhs < rhs ? 1 : -1;
@@ -680,9 +680,9 @@ describe("E2E: Auth Smoke Flows", () => {
     expect(redeem.body.data.studentId).toBe("stu_1");
 
     const parent = mockState.users.get("parent_1");
-    expect(parent.role).toBe("Parent");
-    expect(Array.isArray(parent.studentIds)).toBe(true);
-    expect(parent.studentIds).toContain("stu_1");
+    expect(parent?.role).toBe("Parent");
+    expect(Array.isArray(parent?.studentIds)).toBe(true);
+    expect(parent?.studentIds).toContain("stu_1");
   });
 
   it("updates and deletes attendance through lifecycle endpoints", async () => {

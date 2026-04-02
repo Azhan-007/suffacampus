@@ -28,7 +28,7 @@ const USERS = {
       email: 'super@educonnect.com',
       displayName: 'Super Admin',
       role: 'SuperAdmin',
-      schoolId: null,
+      schoolId: "" as string,
       isActive: true,
     }
   },
