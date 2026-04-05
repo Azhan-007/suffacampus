@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:worker:notifications": "tsx watch src/workers/notification-worker.ts",
+    "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" --max-warnings=0",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "prisma generate && tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
+    "start:render": "prisma migrate deploy && node dist/server.js",
     "start:worker:notifications": "node dist/workers/notification-worker.js",
     "test": "jest --verbose",
     "test:watch": "jest --watch --verbose",
