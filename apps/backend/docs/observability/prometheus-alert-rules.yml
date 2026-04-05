@@ -1,0 +1,77 @@
+﻿groups:
+  - name: SuffaCampus-critical-endpoints
+    interval: 30s
+    rules:
+      - alert: SuffaCampusCriticalEndpointP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, endpoint) (
+              rate(SuffaCampus_critical_request_duration_seconds_bucket[5m])
+            )
+          ) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "Critical endpoint p95 latency is elevated"
+          description: "Endpoint {{ $labels.endpoint }} has p95 latency above 800ms for 10m."
+
+      - alert: SuffaCampusCriticalEndpointP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, endpoint) (
+              rate(SuffaCampus_critical_request_duration_seconds_bucket[5m])
+            )
+          ) > 1.5
+        for: 10m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "Critical endpoint p99 latency is high"
+          description: "Endpoint {{ $labels.endpoint }} has p99 latency above 1.5s for 10m."
+
+      - alert: SuffaCampusAuthLookupCacheMissSpike
+        expr: |
+          (
+            sum(rate(SuffaCampus_auth_lookup_cache_events_total{outcome="miss"}[10m]))
+            /
+            clamp_min(sum(rate(SuffaCampus_auth_lookup_cache_events_total[10m])), 0.001)
+          ) > 0.65
+        for: 15m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "Auth lookup cache miss ratio is high"
+          description: "Auth lookup cache miss ratio exceeded 65% for 15m."
+
+      - alert: SuffaCampusDashboardQueryP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, query) (
+              rate(SuffaCampus_dashboard_query_duration_seconds_bucket[5m])
+            )
+          ) > 0.35
+        for: 10m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "Dashboard query p95 latency is elevated"
+          description: "Dashboard query {{ $labels.query }} p95 latency is above 350ms for 10m."
+
+      - alert: SuffaCampusOverloadSheddingDetected
+        expr: sum(rate(SuffaCampus_overload_shed_requests_total[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "Overload protection is actively shedding traffic"
+          description: "Critical lanes are returning overload responses for at least 5m."
+

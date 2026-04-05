@@ -1,0 +1,281 @@
+import { MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { LinearGradient } from "expo-linear-gradient";
+import { router } from "expo-router";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  orderBy,
+  query,
+  updateDoc,
+} from "firebase/firestore";
+import React, { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Modal,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useModalPortal } from "../../components/ModalPortal";
+import { db } from "../../firebase";
+import { CreateAssignmentForm } from "../../components/CreateAssignmentForm";
+import { SubjectPicker, ClassPicker, DatePicker } from "../../components/AssignmentPickers";
+
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+
+interface Assignment {
+  id: string;
+  subject: string;
+  title: string;
+  description: string;
+  dueDate: string;
+  class: string;
+  priority: "High" | "Medium" | "Low";
+  totalMarks: number;
+  createdBy: string;
+  createdAt: string;
+  status: "active" | "draft" | "closed";
+  submissionCount?: number;
+}
+
+type FilterTab = "all" | "active" | "draft" | "closed";
+
+const SUBJECTS = [
+  { name: "Mathematics", icon: "calculator-variant", color: "#4C6EF5" },
+  { name: "Physics", icon: "atom", color: "#9C27B0" },
+  { name: "Chemistry", icon: "flask", color: "#4CAF50" },
+  { name: "Biology", icon: "leaf", color: "#FF5722" },
+  { name: "English", icon: "book-open-variant", color: "#FF9800" },
+  { name: "Hindi", icon: "translate", color: "#E91E63" },
+  { name: "History", icon: "pillar", color: "#795548" },
+  { name: "Geography", icon: "earth", color: "#009688" },
+  { name: "Computer Science", icon: "laptop", color: "#3F51B5" },
+  { name: "Physical Education", icon: "run", color: "#FFC107" },
+];
+
+const CLASSES = [
+  "6A", "6B", "6C",
+  "7A", "7B", "7C",
+  "8A", "8B", "8C",
+  "9A", "9B", "9C",
+  "10A", "10B", "10C",
+  "11A", "11B", "11C",
+  "12A", "12B", "12C",
+];
+
+const PRIORITIES = [
+  { label: "High", value: "High", color: "#EF4444", bgColor: "#FEE2E2" },
+  { label: "Medium", value: "Medium", color: "#F59E0B", bgColor: "#FEF3C7" },
+  { label: "Low", value: "Low", color: "#10B981", bgColor: "#D1FAE5" },
+];
+
+export default function TeacherAssignmentsScreen() {
+  const { showModal, hideModal, hideAllModals } = useModalPortal();
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [filterTab, setFilterTab] = useState<FilterTab>("all");
+  const [teacherName, setTeacherName] = useState("Teacher");
+  const [teacherEmail, setTeacherEmail] = useState("");
+
+  // Modal IDs for managing portal modals
+  const [currentModalId, setCurrentModalId] = useState<string | null>(null);
+  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
+
+  // Form state
+  const [formData, setFormData] = useState({
+    subject: "",
+    title: "",
+    description: "",
+    dueDate: "",
+    class: "",
+    priority: "Medium" as "High" | "Medium" | "Low",
+    totalMarks: "100",
+    status: "active" as "active" | "draft" | "closed",
+  });
+
+  // Toast state
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const toastAnimation = useState(new Animated.Value(0))[0];
+
+  useEffect(() => {
+    loadTeacherInfo();
+    fetchAssignments();
+  }, []);
+
+  const loadTeacherInfo = async () => {
+    try {
+      const name = await AsyncStorage.getItem("userName");
+      const email = await AsyncStorage.getItem("userEmail");
+      if (name) setTeacherName(name);
+      if (email) setTeacherEmail(email);
+    } catch (error) {
+      console.log("Error loading teacher info:", error);
+    }
+  };
+
+  const fetchAssignments = async () => {
+    try {
+      setLoading(true);
+      const assignmentsRef = collection(db, "assignments");
+      const q = query(assignmentsRef, orderBy("createdAt", "desc"));
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 8000)
+      );
+
+      const snapshot = (await Promise.race([getDocs(q), timeoutPromise])) as any;
+
+      const data: Assignment[] = [];
+      snapshot.forEach((docSnap: any) => {
+        const d = docSnap.data();
+        data.push({
+          id: docSnap.id,
+          subject: d.subject || "",
+          title: d.title || "",
+          description: d.description || "",
+          dueDate: d.dueDate || "",
+          class: d.class || "",
+          priority: d.priority || "Medium",
+          totalMarks: d.totalMarks || 100,
+          createdBy: d.createdBy || d.teacher || "",
+          createdAt: d.createdAt || new Date().toISOString(),
+          status: d.status || "active",
+          submissionCount: d.submissionCount || 0,
+        });
+      });
+
+      setAssignments(data);
+    } catch (error: any) {
+      console.log("Using demo data for assignments");
+      // Demo assignments for offline mode
+      setAssignments([
+        {
+          id: "demo1",
+          subject: "Mathematics",
+          title: "Chapter 5 - Quadratic Equations",
+          description: "Complete exercises 5.1 to 5.4 from textbook. Show all working.",
+          dueDate: "2026-01-25",
+          class: "10A",
+          priority: "High",
+          totalMarks: 100,
+          createdBy: teacherName,
+          createdAt: new Date().toISOString(),
+          status: "active",
+          submissionCount: 12,
+        },
+        {
+          id: "demo2",
+          subject: "Physics",
+          title: "Newton's Laws Lab Report",
+          description: "Submit a detailed lab report based on our experiment.",
+          dueDate: "2026-01-28",
+          class: "10A",
+          priority: "Medium",
+          totalMarks: 50,
+          createdBy: teacherName,
+          createdAt: new Date().toISOString(),
+          status: "active",
+          submissionCount: 8,
+        },
+        {
+          id: "demo3",
+          subject: "Chemistry",
+          title: "Periodic Table Quiz Prep",
+          description: "Study groups 1-18 for the upcoming quiz.",
+          dueDate: "2026-02-05",
+          class: "11A",
+          priority: "Low",
+          totalMarks: 25,
+          createdBy: teacherName,
+          createdAt: new Date().toISOString(),
+          status: "draft",
+          submissionCount: 0,
+        },
+      ]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchAssignments();
+  };
+
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    setToastVisible(true);
+    Animated.sequence([
+      Animated.timing(toastAnimation, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.delay(2500),
+      Animated.timing(toastAnimation, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start(() => setToastVisible(false));
+  };
+
+  const resetForm = () => {
+    setFormData({
+      subject: "",
+      title: "",
+      description: "",
+      dueDate: "",
+      class: "",
+      priority: "Medium",
+      totalMarks: "100",
+      status: "active",
+    });
+    setEditingAssignment(null);
+    if (currentModalId) {
+      hideModal(currentModalId);
+      setCurrentModalId(null);
+    }
+  };
+
+  const openCreateModal = () => {
+  const openCreateModal = () => {
+    resetForm();
+    const modalId = showModal(
+      <CreateAssignmentForm
+        formData={formData}
+        onChangeForm={(data) => setFormData({ ...formData, ...data })}
+        onClose={() => {
+          hideModal(modalId);
+          setCurrentModalId(null);
+          resetForm();
+        }}
+        onSave={handleSaveAssignment}
+        onOpenSubjectPicker={() => {
+          hideModal(modalId);
+          openSubjectPicker();
+        }}
+        onOpenClassPicker={() => {
+          hideModal(modalId);
+          openClassPicker();
+        }}
+        onOpenDatePicker={() => {
+          hideModal(modalId);
+          openDatePicker();
+        }}
+        isEditing={false}
+        getSubjectIcon={getSubjectIcon}
+        getSubjectColor={getSubjectColor}
+        formatDate={formatDate}
+      />
+    );
+    setCurrentModalId(modalId);
+  };
+

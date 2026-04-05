@@ -1,0 +1,610 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Get the current user's document from the users collection
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    // Get the user's role
+    function getUserRole() {
+      return getUserData().role;
+    }
+    
+    // Get the user's schoolId
+    function getUserSchoolId() {
+      return getUserData().schoolId;
+    }
+    
+    // Check if user is active
+    function isActiveUser() {
+      return getUserData().isActive == true;
+    }
+    
+    // Check if user is SuperAdmin (platform-wide access)
+    function isSuperAdmin() {
+      return isAuthenticated() && getUserRole() == 'SuperAdmin';
+    }
+    
+    // Check if user is Admin of their school
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'Admin';
+    }
+    
+    // Check if user is Principal
+    function isPrincipal() {
+      return isAuthenticated() && getUserRole() == 'Principal';
+    }
+    
+    // Check if user is Staff
+    function isStaff() {
+      return isAuthenticated() && getUserRole() == 'Staff';
+    }
+    
+    // Check if user is Accountant
+    function isAccountant() {
+      return isAuthenticated() && getUserRole() == 'Accountant';
+    }
+    
+    // Check if user has admin-level access (SuperAdmin, Admin, or Principal)
+    function hasAdminAccess() {
+      return isSuperAdmin() || isAdmin() || isPrincipal();
+    }
+    
+    // Check if user belongs to the specified school
+    function belongsToSchool(schoolId) {
+      return isAuthenticated() && isActiveUser() && getUserSchoolId() == schoolId;
+    }
+    
+    // Check if user can access a document with schoolId field
+    // SuperAdmin can access all, others only their school
+    function canAccessSchool(schoolId) {
+      return isSuperAdmin() || belongsToSchool(schoolId);
+    }
+    
+    // Validate that the schoolId in the document matches user's school (for writes)
+    function isValidSchoolId() {
+      return request.resource.data.schoolId == getUserSchoolId();
+    }
+    
+    // Check if document schoolId is not being changed (for updates)
+    function schoolIdNotChanged() {
+      return !('schoolId' in request.resource.data) || 
+             request.resource.data.schoolId == resource.data.schoolId;
+    }
+    
+    // Validate required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    // Check if user can write to their school's data
+    function canWriteToSchool(schoolId) {
+      return isSuperAdmin() || (belongsToSchool(schoolId) && (isAdmin() || isPrincipal()));
+    }
+    
+    // Finance-related access (Admin, Principal, Accountant)
+    function hasFinanceAccess(schoolId) {
+      return isSuperAdmin() || 
+             (belongsToSchool(schoolId) && (isAdmin() || isPrincipal() || isAccountant()));
+    }
+    
+    // Staff can only read, not write (except specific cases)
+    function hasReadOnlyAccess(schoolId) {
+      return canAccessSchool(schoolId);
+    }
+    
+    
+    // ============================================
+    // USERS COLLECTION
+    // ============================================
+    // Users can read their own profile
+    // SuperAdmin can read/write all users
+    // Admin can read users in their school, create new users
+    // ============================================
+    
+    match /users/{userId} {
+      // Anyone can read their own profile
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        isSuperAdmin() ||
+        (isActiveUser() && belongsToSchool(resource.data.schoolId) && hasAdminAccess())
+      );
+      
+      // Create: SuperAdmin can create any user
+      // Admin can create users for their school only
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && isValidSchoolId())
+      );
+      
+      // Update: Users can update their own non-critical fields
+      // SuperAdmin can update anyone
+      // Admin can update users in their school (except role elevation)
+      allow update: if isAuthenticated() && (
+        // User updating own profile (limited fields)
+        (request.auth.uid == userId && 
+         !('role' in request.resource.data) && 
+         !('schoolId' in request.resource.data) &&
+         !('isActive' in request.resource.data)) ||
+        // SuperAdmin full access
+        isSuperAdmin() ||
+        // Admin can update school users but not elevate to SuperAdmin
+        (isAdmin() && 
+         belongsToSchool(resource.data.schoolId) && 
+         schoolIdNotChanged() &&
+         request.resource.data.role != 'SuperAdmin')
+      );
+      
+      // Delete: Only SuperAdmin can delete users
+      // Admin can deactivate (update isActive to false)
+      allow delete: if isSuperAdmin();
+    }
+    
+    
+    // ============================================
+    // SCHOOLS COLLECTION
+    // ============================================
+    // SuperAdmin: Full CRUD on all schools
+    // Admin: Read own school, update limited fields
+    // Others: Read own school only
+    // ============================================
+    
+    match /schools/{schoolId} {
+      // Read: SuperAdmin reads all, others read own school
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        belongsToSchool(schoolId)
+      );
+      
+      // Create: Only SuperAdmin can create schools
+      allow create: if isSuperAdmin();
+      
+      // Update: SuperAdmin full access
+      // Admin can update non-subscription fields
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(schoolId) && 
+         // Admin cannot modify subscription/billing fields
+         !('subscriptionPlan' in request.resource.data) &&
+         !('subscriptionStatus' in request.resource.data) &&
+         !('currentPeriodEnd' in request.resource.data) &&
+         !('limits' in request.resource.data) &&
+         !('billingEmail' in request.resource.data))
+      );
+      
+      // Delete: Only SuperAdmin
+      allow delete: if isSuperAdmin();
+    }
+    
+    
+    // ============================================
+    // STUDENTS COLLECTION
+    // ============================================
+    // SuperAdmin: Full access
+    // Admin/Principal: Full CRUD in their school
+    // Staff: Read only (their assigned classes ideally)
+    // Accountant: Read only (for fee linking)
+    // ============================================
+    
+    match /students/{studentId} {
+      allow read: if isAuthenticated() && canAccessSchool(resource.data.schoolId);
+      
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(request.resource.data.schoolId) && 
+         hasRequiredFields(['firstName', 'lastName', 'schoolId', 'classId']))
+      );
+      
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(resource.data.schoolId) && schoolIdNotChanged())
+      );
+      
+      allow delete: if isAuthenticated() && canWriteToSchool(resource.data.schoolId);
+    }
+    
+    
+    // ============================================
+    // TEACHERS COLLECTION
+    // ============================================
+    // Similar to students but teachers can read their own profile
+    // ============================================
+    
+    match /teachers/{teacherId} {
+      allow read: if isAuthenticated() && (
+        canAccessSchool(resource.data.schoolId) ||
+        // Teachers can read their own profile via linked userId
+        resource.data.userId == request.auth.uid
+      );
+      
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(request.resource.data.schoolId) && 
+         hasRequiredFields(['firstName', 'lastName', 'schoolId', 'email']))
+      );
+      
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(resource.data.schoolId) && schoolIdNotChanged())
+      );
+      
+      allow delete: if isAuthenticated() && canWriteToSchool(resource.data.schoolId);
+    }
+    
+    
+    // ============================================
+    // ATTENDANCE COLLECTION
+    // ============================================
+    // Staff can create/update attendance (mark attendance)
+    // Admin/Principal: Full access
+    // ============================================
+    
+    match /attendance/{attendanceId} {
+      allow read: if isAuthenticated() && canAccessSchool(resource.data.schoolId);
+      
+      // Staff can mark attendance
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        canWriteToSchool(request.resource.data.schoolId) ||
+        (isStaff() && belongsToSchool(request.resource.data.schoolId))
+      );
+      
+      // Staff can update attendance they marked (same day)
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        canWriteToSchool(resource.data.schoolId) ||
+        (isStaff() && belongsToSchool(resource.data.schoolId) && 
+         resource.data.markedBy == request.auth.uid &&
+         schoolIdNotChanged())
+      );
+      
+      allow delete: if isAuthenticated() && canWriteToSchool(resource.data.schoolId);
+    }
+    
+    
+    // ============================================
+    // FEES COLLECTION
+    // ============================================
+    // Finance-sensitive: Admin, Principal, Accountant
+    // Staff: No access
+    // ============================================
+    
+    match /fees/{feeId} {
+      // Only finance roles can access fees
+      allow read: if isAuthenticated() && hasFinanceAccess(resource.data.schoolId);
+      
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (hasFinanceAccess(request.resource.data.schoolId) && 
+         (isAdmin() || isPrincipal()) &&
+         hasRequiredFields(['studentId', 'amount', 'schoolId', 'feeType']))
+      );
+      
+      // Accountant can update payment status
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (hasFinanceAccess(resource.data.schoolId) && schoolIdNotChanged())
+      );
+      
+      // Only Admin can delete fee records
+      allow delete: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(resource.data.schoolId))
+      );
+    }
+    
+    
+    // ============================================
+    // EVENTS COLLECTION
+    // ============================================
+    // All school members can read
+    // Admin/Principal can write
+    // ============================================
+    
+    match /events/{eventId} {
+      allow read: if isAuthenticated() && canAccessSchool(resource.data.schoolId);
+      
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(request.resource.data.schoolId) && 
+         hasRequiredFields(['title', 'schoolId', 'startDate']))
+      );
+      
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(resource.data.schoolId) && schoolIdNotChanged())
+      );
+      
+      allow delete: if isAuthenticated() && canWriteToSchool(resource.data.schoolId);
+    }
+    
+    
+    // ============================================
+    // SUBSCRIPTIONS COLLECTION
+    // ============================================
+    // Highly sensitive: SuperAdmin and system only
+    // Admin can read their school's subscription
+    // ============================================
+    
+    match /subscriptions/{subscriptionId} {
+      // Admin can read their school's subscription
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(resource.data.schoolId))
+      );
+      
+      // Only SuperAdmin or backend/webhooks can write
+      // In production, use Admin SDK for subscription writes
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+    
+    
+    // ============================================
+    // INVOICES COLLECTION
+    // ============================================
+    // Admin and Accountant can read
+    // Only SuperAdmin/system can create (from payment gateway)
+    // ============================================
+    
+    match /invoices/{invoiceId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        hasFinanceAccess(resource.data.schoolId)
+      );
+      
+      // Invoices should be created by backend/webhooks
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+    
+    
+    // ============================================
+    // USAGE RECORDS COLLECTION
+    // ============================================
+    // System-generated, read-only for most users
+    // SuperAdmin full access for monitoring
+    // Admin can read their school's usage
+    // ============================================
+    
+    match /usageRecords/{recordId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(resource.data.schoolId))
+      );
+      
+      // Usage records should be created by backend/Cloud Functions
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+    
+    
+    // ============================================
+    // CLASSES COLLECTION
+    // ============================================
+    
+    match /classes/{classId} {
+      allow read: if isAuthenticated() && canAccessSchool(resource.data.schoolId);
+      
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(request.resource.data.schoolId) && 
+         hasRequiredFields(['name', 'schoolId']))
+      );
+      
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(resource.data.schoolId) && schoolIdNotChanged())
+      );
+      
+      allow delete: if isAuthenticated() && canWriteToSchool(resource.data.schoolId);
+    }
+    
+    
+    // ============================================
+    // TIMETABLE COLLECTION
+    // ============================================
+    
+    match /timetable/{timetableId} {
+      allow read: if isAuthenticated() && canAccessSchool(resource.data.schoolId);
+      
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        canWriteToSchool(request.resource.data.schoolId)
+      );
+      
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(resource.data.schoolId) && schoolIdNotChanged())
+      );
+      
+      allow delete: if isAuthenticated() && canWriteToSchool(resource.data.schoolId);
+    }
+    
+    
+    // ============================================
+    // ASSIGNMENTS COLLECTION
+    // ============================================
+    // Staff (teachers) can create and manage assignments
+    // ============================================
+    
+    match /assignments/{assignmentId} {
+      allow read: if isAuthenticated() && canAccessSchool(resource.data.schoolId);
+      
+      // Staff can create assignments
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        canWriteToSchool(request.resource.data.schoolId) ||
+        (isStaff() && belongsToSchool(request.resource.data.schoolId))
+      );
+      
+      // Staff can update their own assignments
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        canWriteToSchool(resource.data.schoolId) ||
+        (isStaff() && belongsToSchool(resource.data.schoolId) && 
+         resource.data.createdBy == request.auth.uid &&
+         schoolIdNotChanged())
+      );
+      
+      allow delete: if isAuthenticated() && (
+        canWriteToSchool(resource.data.schoolId) ||
+        (isStaff() && belongsToSchool(resource.data.schoolId) && 
+         resource.data.createdBy == request.auth.uid)
+      );
+    }
+    
+    
+    // ============================================
+    // RESULTS COLLECTION
+    // ============================================
+    
+    match /results/{resultId} {
+      allow read: if isAuthenticated() && canAccessSchool(resource.data.schoolId);
+      
+      // Staff can enter results
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        canWriteToSchool(request.resource.data.schoolId) ||
+        (isStaff() && belongsToSchool(request.resource.data.schoolId))
+      );
+      
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        canWriteToSchool(resource.data.schoolId) ||
+        (isStaff() && belongsToSchool(resource.data.schoolId) && schoolIdNotChanged())
+      );
+      
+      // Only Admin can delete results
+      allow delete: if isAuthenticated() && canWriteToSchool(resource.data.schoolId);
+    }
+    
+    
+    // ============================================
+    // LIBRARY COLLECTION
+    // ============================================
+    
+    match /library/{bookId} {
+      allow read: if isAuthenticated() && canAccessSchool(resource.data.schoolId);
+      
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        canWriteToSchool(request.resource.data.schoolId)
+      );
+      
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (canWriteToSchool(resource.data.schoolId) && schoolIdNotChanged()) ||
+        // Staff can update for issue/return
+        (isStaff() && belongsToSchool(resource.data.schoolId) && schoolIdNotChanged())
+      );
+      
+      allow delete: if isAuthenticated() && canWriteToSchool(resource.data.schoolId);
+    }
+    
+    
+    // ============================================
+    // SETTINGS COLLECTION
+    // ============================================
+    // School-level settings
+    // ============================================
+    
+    match /settings/{schoolId} {
+      allow read: if isAuthenticated() && canAccessSchool(schoolId);
+      
+      allow create: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(schoolId))
+      );
+      
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(schoolId))
+      );
+      
+      allow delete: if isSuperAdmin();
+    }
+    
+    
+    // ============================================
+    // USAGE ALERTS COLLECTION
+    // ============================================
+    
+    match /usageAlerts/{alertId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(resource.data.schoolId))
+      );
+      
+      // Alerts are system-generated
+      allow create: if isSuperAdmin();
+      
+      // Admin can acknowledge/dismiss alerts
+      allow update: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(resource.data.schoolId) &&
+         // Can only update acknowledgement fields
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['acknowledged', 'acknowledgedAt', 'acknowledgedBy']))
+      );
+      
+      allow delete: if isSuperAdmin();
+    }
+    
+    
+    // ============================================
+    // PAYMENTS COLLECTION (for subscription payments)
+    // ============================================
+    
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (
+        isSuperAdmin() ||
+        (isAdmin() && belongsToSchool(resource.data.schoolId))
+      );
+      
+      // Payments are created by payment gateway webhooks
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+    
+    
+    // ============================================
+    // AUDIT LOGS COLLECTION (optional)
+    // ============================================
+    
+    match /auditLogs/{logId} {
+      // Only SuperAdmin can read audit logs
+      allow read: if isSuperAdmin();
+      
+      // Logs are write-only (append), no updates/deletes
+      allow create: if isAuthenticated();
+      allow update: if false;
+      allow delete: if false;
+    }
+    
+    
+    // ============================================
+    // CATCH-ALL: Deny everything else
+    // ============================================
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

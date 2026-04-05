@@ -1,0 +1,409 @@
+﻿import pino from "pino";
+import type { Prisma } from "@prisma/client";
+import { prisma } from "../lib/prisma";
+import { Errors } from "../errors";
+import { writeAuditLog } from "./audit.service";
+import type { CreateNotificationInput } from "../schemas/notification.schema";
+import {
+  NotificationPreferenceService,
+  type NotificationPreferenceType,
+} from "./notification-preference.service";
+
+const log = pino({ name: "notification" });
+
+type NotificationQueueModule = {
+  enqueueNotificationJob: (payload: {
+    notificationId: string;
+    schoolId: string;
+    targetType: "USER" | "ROLE" | "SCHOOL";
+    targetId: string | null;
+    title: string;
+    message: string;
+    referenceId: string | null;
+    referenceType: string | null;
+  }) => Promise<string>;
+};
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface NotificationContext {
+  userId: string;
+  schoolId: string;
+  role: string;
+}
+
+const CREATE_ALLOWED_ROLES = ["Admin", "Staff"] as const;
+
+function assertCreateRole(role: string): void {
+  if (!CREATE_ALLOWED_ROLES.includes(role as any)) {
+    throw Errors.insufficientRole([...CREATE_ALLOWED_ROLES]);
+  }
+}
+
+function resolveTargetId(
+  input: Pick<CreateNotificationInput, "targetType" | "targetId">,
+  context: NotificationContext
+): string | null {
+  if (input.targetType === "USER") {
+    if (!input.targetId) {
+      throw Errors.badRequest("Target user is required for USER notifications");
+    }
+    return input.targetId;
+  }
+
+  if (input.targetType === "ROLE") {
+    if (!input.targetId) {
+      throw Errors.badRequest("Target role is required for ROLE notifications");
+    }
+    return input.targetId;
+  }
+
+  if (input.targetType === "SCHOOL") {
+    if (input.targetId) {
+      throw Errors.badRequest("Target id is not allowed for SCHOOL notifications");
+    }
+    return null;
+  }
+
+  throw Errors.badRequest("Invalid target type");
+}
+
+const KNOWN_REFERENCE_TYPES = ["ATTENDANCE", "FEE", "PAYMENT", "RESULTS"] as const;
+
+function resolvePreferenceType(referenceType?: string | null): NotificationPreferenceType {
+  if (referenceType === "ATTENDANCE") return "ATTENDANCE";
+  if (referenceType === "FEE" || referenceType === "PAYMENT") return "FEES";
+  if (referenceType === "RESULTS") return "RESULTS";
+  return "GENERAL";
+}
+
+function isPreferenceEnabled(
+  preferences: {
+    attendanceEnabled: boolean;
+    feesEnabled: boolean;
+    resultsEnabled: boolean;
+    generalEnabled: boolean;
+  },
+  preferenceType: NotificationPreferenceType
+): boolean {
+  switch (preferenceType) {
+    case "ATTENDANCE":
+      return preferences.attendanceEnabled;
+    case "FEES":
+      return preferences.feesEnabled;
+    case "RESULTS":
+      return preferences.resultsEnabled;
+    case "GENERAL":
+    default:
+      return preferences.generalEnabled;
+  }
+}
+
+function shouldEnqueueNotificationJobs(): boolean {
+  if (process.env.NODE_ENV !== "test") {
+    return true;
+  }
+
+  return process.env.NOTIFICATION_QUEUE_ENABLED === "true";
+}
+
+// ---------------------------------------------------------------------------
+// In-app notifications
+// ---------------------------------------------------------------------------
+
+export async function createNotification(
+  input: CreateNotificationInput,
+  context: NotificationContext
+) {
+  assertCreateRole(context.role);
+
+  const targetId = resolveTargetId(input, context);
+
+  if (input.targetType === "USER" && targetId) {
+    const preferenceType = resolvePreferenceType(input.referenceType);
+    const shouldSend = await NotificationPreferenceService.shouldSendNotification(
+      targetId,
+      context.schoolId,
+      preferenceType,
+      "inApp"
+    );
+
+    if (!shouldSend) {
+      return null;
+    }
+  }
+
+  const notification = await prisma.notification.create({
+    data: {
+      schoolId: context.schoolId,
+      title: input.title,
+      message: input.message,
+      type: input.type as any,
+      targetType: input.targetType as any,
+      targetId,
+      referenceId: input.referenceId ?? null,
+      referenceType: input.referenceType ?? null,
+      createdBy: context.userId,
+    },
+  });
+
+  await writeAuditLog("CREATE_NOTIFICATION", context.userId, context.schoolId, {
+    notificationId: notification.id,
+    targetType: notification.targetType,
+    targetId: notification.targetId ?? null,
+    referenceId: notification.referenceId ?? null,
+    referenceType: notification.referenceType ?? null,
+  });
+
+  if (shouldEnqueueNotificationJobs()) {
+    try {
+      const queueModule = require("./notification-queue.service") as NotificationQueueModule;
+      void queueModule
+        .enqueueNotificationJob({
+          notificationId: notification.id,
+          schoolId: notification.schoolId,
+          targetType: notification.targetType as "USER" | "ROLE" | "SCHOOL",
+          targetId: notification.targetId ?? null,
+          title: notification.title,
+          message: notification.message,
+          referenceId: notification.referenceId ?? null,
+          referenceType: notification.referenceType ?? null,
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          log.warn(
+            { notificationId: notification.id, err: message },
+            "Notification job enqueue failed"
+          );
+        });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(
+        { notificationId: notification.id, err: message },
+        "Notification queue module unavailable"
+      );
+    }
+  }
+
+  return notification;
+}
+
+export async function getNotificationsForUser(
+  context: NotificationContext,
+  options: { limit?: number } = {}
+) {
+  const preferences = await NotificationPreferenceService.getPreferences({
+    userId: context.userId,
+    schoolId: context.schoolId,
+  });
+
+  if (!preferences.inAppEnabled) {
+    return [];
+  }
+
+  const limit = options.limit ?? 50;
+  const notifications = await prisma.notification.findMany({
+    where: {
+      schoolId: context.schoolId,
+      OR: [
+        { targetType: "USER", targetId: context.userId },
+        { targetType: "ROLE", targetId: context.role },
+        { targetType: "SCHOOL" },
+      ],
+    },
+    include: {
+      reads: {
+        where: { userId: context.userId },
+        select: { readAt: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+
+  const filtered = notifications.filter((notification) =>
+    isPreferenceEnabled(
+      preferences,
+      resolvePreferenceType(notification.referenceType)
+    )
+  );
+
+  return filtered.map((notification) => {
+    const readAt = notification.reads[0]?.readAt ?? null;
+    const { reads, ...rest } = notification;
+    return {
+      ...rest,
+      isRead: readAt !== null,
+      readAt,
+    };
+  });
+}
+
+export async function markAsRead(
+  notificationId: string,
+  context: NotificationContext
+): Promise<boolean> {
+  const notification = await prisma.notification.findFirst({
+    where: { id: notificationId, schoolId: context.schoolId },
+    select: { id: true, targetType: true, targetId: true },
+  });
+
+  if (!notification) {
+    throw Errors.notFound("Notification", notificationId);
+  }
+
+  const isRecipient =
+    notification.targetType === "SCHOOL" ||
+    (notification.targetType === "USER" && notification.targetId === context.userId) ||
+    (notification.targetType === "ROLE" && notification.targetId === context.role);
+
+  if (!isRecipient) {
+    throw Errors.notFound("Notification", notificationId);
+  }
+
+  await prisma.notificationRead.upsert({
+    where: {
+      notificationId_userId: {
+        notificationId,
+        userId: context.userId,
+      },
+    },
+    update: {},
+    create: {
+      notificationId,
+      userId: context.userId,
+    },
+  });
+
+  return true;
+}
+
+export async function markAllAsRead(context: NotificationContext): Promise<number> {
+  const notifications = await prisma.notification.findMany({
+    where: {
+      schoolId: context.schoolId,
+      OR: [
+        { targetType: "USER", targetId: context.userId },
+        { targetType: "ROLE", targetId: context.role },
+        { targetType: "SCHOOL" },
+      ],
+    },
+    select: { id: true },
+  });
+
+  if (notifications.length === 0) return 0;
+
+  const result = await prisma.notificationRead.createMany({
+    data: notifications.map((n) => ({
+      notificationId: n.id,
+      userId: context.userId,
+    })),
+    skipDuplicates: true,
+  });
+
+  return result.count;
+}
+
+export async function getUnreadCount(context: NotificationContext): Promise<number> {
+  const preferences = await NotificationPreferenceService.getPreferences({
+    userId: context.userId,
+    schoolId: context.schoolId,
+  });
+
+  if (!preferences.inAppEnabled) {
+    return 0;
+  }
+
+  if (
+    !preferences.attendanceEnabled &&
+    !preferences.feesEnabled &&
+    !preferences.resultsEnabled &&
+    !preferences.generalEnabled
+  ) {
+    return 0;
+  }
+
+  const referenceFilters: Array<Record<string, unknown>> = [];
+  if (preferences.attendanceEnabled) {
+    referenceFilters.push({ referenceType: "ATTENDANCE" });
+  }
+  if (preferences.feesEnabled) {
+    referenceFilters.push({ referenceType: { in: ["FEE", "PAYMENT"] } });
+  }
+  if (preferences.resultsEnabled) {
+    referenceFilters.push({ referenceType: "RESULTS" });
+  }
+  if (preferences.generalEnabled) {
+    referenceFilters.push({ referenceType: null });
+    referenceFilters.push({ referenceType: { notIn: [...KNOWN_REFERENCE_TYPES] } });
+  }
+
+  const targetClauses: Prisma.NotificationWhereInput[] = [
+    { targetType: "SCHOOL" },
+    { targetType: "USER", targetId: context.userId },
+  ];
+
+  if (context.role) {
+    targetClauses.push({ targetType: "ROLE", targetId: context.role });
+  }
+
+  return prisma.notification.count({
+    where: {
+      schoolId: context.schoolId,
+      OR: targetClauses,
+      ...(referenceFilters.length > 0 ? { AND: [{ OR: referenceFilters }] } : {}),
+      NOT: {
+        reads: {
+          some: { userId: context.userId },
+        },
+      },
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Email (SendGrid)
+// ---------------------------------------------------------------------------
+
+import sgMail from "@sendgrid/mail";
+
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+const EMAIL_FROM = process.env.EMAIL_FROM || "noreply@SuffaCampus.app";
+const EMAIL_FROM_NAME = process.env.EMAIL_FROM_NAME || "SuffaCampus";
+
+if (SENDGRID_API_KEY) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
+}
+
+export interface EmailPayload {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}
+
+export async function sendEmail(payload: EmailPayload): Promise<boolean> {
+  if (!SENDGRID_API_KEY) {
+    log.info({ to: payload.to, subject: payload.subject }, "Email dry-run (no SENDGRID_API_KEY)");
+    return true;
+  }
+
+  try {
+    await sgMail.send({
+      to: payload.to,
+      from: { email: EMAIL_FROM, name: EMAIL_FROM_NAME },
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text ?? payload.html.replace(/<[^>]*>/g, ""),
+    });
+    log.info({ to: payload.to, subject: payload.subject }, "Email sent");
+    return true;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    log.error({ to: payload.to, subject: payload.subject, err: message }, "Email send failed");
+    return false;
+  }
+}
+

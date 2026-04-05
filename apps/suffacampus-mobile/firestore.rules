@@ -1,0 +1,112 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Users collection - CRITICAL for login (must allow unauthenticated read for login)
+    match /users/{userId} {
+      allow read: if true; // Allow reading for login username lookup
+      allow write: if request.auth != null && 
+                     (request.auth.uid == userId || request.auth.token.role == 'admin');
+      allow create: if request.auth != null; // Allow user creation during signup
+    }
+    
+    // Allow read access to carousel images for all authenticated users
+    match /carousel/{document=**} {
+      allow read: if true; // Public read access
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    // Teachers collection
+    match /teachers/{teacherId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                     (request.auth.uid == teacherId || request.auth.token.role == 'admin');
+    }
+    
+    // Students collection
+    match /students/{studentId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    // Attendance collection
+    match /attendance/{attendanceId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                     (request.auth.token.role == 'teacher' || request.auth.token.role == 'admin');
+    }
+    
+    // Assignments collection
+    match /assignments/{assignmentId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                     (request.auth.token.role == 'teacher' || request.auth.token.role == 'admin');
+    }
+    
+    // Results collection
+    match /results/{resultId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                     (request.auth.token.role == 'teacher' || request.auth.token.role == 'admin');
+    }
+    
+    // Question Bank collection
+    match /questionBank/{questionId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                     (request.auth.token.role == 'teacher' || request.auth.token.role == 'admin');
+    }
+    
+    // Timetable collection
+    match /timetable/{timetableId} {
+      allow read: if true; // Allow all reads for timetable
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    // Events collection
+    match /events/{eventId} {
+      allow read: if true; // Allow all reads for events
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    // Teacher Tasks collection
+    match /teacherTasks/{taskId} {
+      allow read: if true; // Allow all reads for tasks
+      allow write: if request.auth != null && 
+                     (request.auth.token.role == 'teacher' || request.auth.token.role == 'admin');
+    }
+    
+    // Teacher Activities collection
+    match /teacherActivities/{activityId} {
+      allow read: if true; // Allow all reads for activities
+      allow write: if request.auth != null && 
+                     (request.auth.token.role == 'teacher' || request.auth.token.role == 'admin');
+    }
+    
+    // Fees collection
+    match /fees/{feeId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    // Library collection
+    match /library/{libraryId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                     (request.auth.token.role == 'teacher' || request.auth.token.role == 'admin');
+    }
+    
+    // Schedules collection (for teacher schedules)
+    match /schedules/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+                     (request.auth.token.role == 'teacher' || request.auth.token.role == 'admin');
+    }
+    
+    // Summary configuration (for admin to manage Today's Summary)
+    match /summaryConfig/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+  }
+}

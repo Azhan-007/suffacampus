@@ -1,0 +1,25 @@
+﻿{
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://SuffaCampus-backend-k8ox.onrender.com/api/v1",
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyA-kfptqCnEpwfEIm1mvZpz-qFZ8LB8KA4",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "SuffaCampus-fa194.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "SuffaCampus-fa194",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "SuffaCampus-fa194.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "706157708984",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:706157708984:web:770beb3e2df4230530964d"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  }
+}
+

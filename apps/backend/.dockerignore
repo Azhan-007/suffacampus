@@ -1,0 +1,9 @@
+node_modules
+dist
+*.log
+.env*
+coverage
+__tests__
+k6
+.git
+.github
