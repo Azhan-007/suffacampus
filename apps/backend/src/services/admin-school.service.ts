@@ -552,11 +552,15 @@ export async function createSchool(
     maxTeachers,
   });
 
-  await writeAuditLog("CREATE_SCHOOL", performedBy, school.id, {
-    schoolName: school.name,
-    schoolCode: school.code,
-    plan: school.subscriptionPlan,
-  });
+  try {
+    await writeAuditLog("CREATE_SCHOOL", performedBy, school.id, {
+      schoolName: school.name,
+      schoolCode: school.code,
+      plan: school.subscriptionPlan,
+    });
+  } catch (error) {
+    log.warn({ err: error, schoolId: school.id }, "Skipping CREATE_SCHOOL audit write");
+  }
 
   // Auto-create admin user
   let adminCredentials: AdminCredentials | undefined;
@@ -594,10 +598,14 @@ export async function createSchool(
         uid: userRecord.uid,
       };
 
-      await writeAuditLog("CREATE_ADMIN", performedBy, school.id, {
-        adminUid: userRecord.uid,
-        adminEmail: data.adminEmail,
-      });
+      try {
+        await writeAuditLog("CREATE_ADMIN", performedBy, school.id, {
+          adminUid: userRecord.uid,
+          adminEmail: data.adminEmail,
+        });
+      } catch (error) {
+        log.warn({ err: error, schoolId: school.id }, "Skipping CREATE_ADMIN audit write");
+      }
     } catch (err: any) {
       log.error({ err }, "Failed to auto-create admin user");
     }
