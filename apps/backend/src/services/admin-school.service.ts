@@ -373,7 +373,7 @@ function parseOptionalDate(value?: string): Date | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
-function defaultSchoolSummaryCardConfig(): Record<string, unknown> {
+function defaultSchoolSummaryCardConfig(): Prisma.InputJsonObject {
   return {
     enabled: true,
     title: "Today's Summary",
@@ -478,16 +478,18 @@ export async function createSchool(
       },
     });
 
+    const bootstrapMetadata: Prisma.InputJsonObject = {
+      subscriptionBootstrap: {
+        plan: initialPlan,
+        limits: { maxStudents, maxTeachers },
+      },
+    };
+
     await tx.schoolConfig.create({
       data: {
         schoolId: createdSchool.id,
         summaryCard: defaultSchoolSummaryCardConfig(),
-        metadata: {
-          subscriptionBootstrap: {
-            plan: initialPlan,
-            limits: { maxStudents, maxTeachers },
-          },
-        },
+        metadata: bootstrapMetadata,
       },
     });
 
