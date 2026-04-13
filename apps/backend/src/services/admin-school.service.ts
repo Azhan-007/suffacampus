@@ -16,6 +16,8 @@ import {
 const log = createLogger("admin-school-service");
 
 const SCHOOL_SCHEMA_IDENTIFIERS = ["School", "school"];
+const SUBSCRIPTION_SCHEMA_IDENTIFIERS = ["Subscription", "subscription"];
+const SCHOOL_CONFIG_SCHEMA_IDENTIFIERS = ["SchoolConfig", "schoolconfig"];
 
 function toNumber(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -403,6 +405,76 @@ function defaultSchoolSummaryCardConfig(): Prisma.InputJsonObject {
   };
 }
 
+async function createSubscriptionBootstrapSafe(params: {
+  schoolId: string;
+  plan: ReturnType<typeof normalizeTenantPlan>;
+  status: "trial" | "active" | "expired" | "cancelled" | "past_due";
+  subscriptionStartDate: Date;
+  subscriptionEndDate?: Date;
+  trialEndDate: Date;
+  autoRenew: boolean;
+  currency: string;
+}): Promise<void> {
+  try {
+    await prisma.subscription.create({
+      data: {
+        schoolId: params.schoolId,
+        plan: params.plan,
+        status: params.status,
+        billingCycle: "monthly",
+        startDate: params.subscriptionStartDate,
+        endDate: params.subscriptionEndDate,
+        trialEndDate: params.status === "trial" ? params.trialEndDate : null,
+        autoRenew: params.autoRenew,
+        amount: 0,
+        currency: params.currency,
+      },
+    });
+  } catch (error) {
+    if (!isSchemaCompatibilityError(error, SUBSCRIPTION_SCHEMA_IDENTIFIERS)) {
+      throw error;
+    }
+
+    log.warn(
+      { err: error, schoolId: params.schoolId },
+      "Skipping subscription bootstrap due to schema compatibility"
+    );
+  }
+}
+
+async function createSchoolConfigBootstrapSafe(params: {
+  schoolId: string;
+  initialPlan: ReturnType<typeof normalizeTenantPlan>;
+  maxStudents: number;
+  maxTeachers: number;
+}): Promise<void> {
+  const bootstrapMetadata: Prisma.InputJsonObject = {
+    subscriptionBootstrap: {
+      plan: params.initialPlan,
+      limits: { maxStudents: params.maxStudents, maxTeachers: params.maxTeachers },
+    },
+  };
+
+  try {
+    await prisma.schoolConfig.create({
+      data: {
+        schoolId: params.schoolId,
+        summaryCard: defaultSchoolSummaryCardConfig(),
+        metadata: bootstrapMetadata,
+      },
+    });
+  } catch (error) {
+    if (!isSchemaCompatibilityError(error, SCHOOL_CONFIG_SCHEMA_IDENTIFIERS)) {
+      throw error;
+    }
+
+    log.warn(
+      { err: error, schoolId: params.schoolId },
+      "Skipping school-config bootstrap due to schema compatibility"
+    );
+  }
+}
+
 export async function createSchool(
   data: CreateSchoolInput,
   performedBy: string
@@ -430,70 +502,54 @@ export async function createSchool(
   const maxStudents = resolveStudentLimitForPlan(initialPlan, data.maxStudents);
   const maxTeachers = resolveTeacherLimitForPlan(initialPlan, data.maxTeachers);
 
-  const school = await prisma.$transaction(async (tx) => {
-    const createdSchool = await tx.school.create({
-      data: {
-        name: data.name,
-        code,
-        address: data.address,
-        city: data.city,
-        state: data.state,
-        pincode: data.pincode,
-        phone: data.phone,
-        email: data.email,
-        website: data.website,
-        principalName: data.principalName,
-        logoURL: data.logoURL,
-        primaryColor: data.primaryColor ?? "#1a73e8",
-        secondaryColor: data.secondaryColor ?? "#4285f4",
-        subscriptionPlan: initialPlan,
-        subscriptionStatus: initialStatus,
-        subscriptionStartDate,
-        subscriptionEndDate,
-        trialEndDate: trialEnd,
-        maxStudents,
-        maxTeachers,
-        maxStorage: data.maxStorage ?? 1024,
-        timezone: data.timezone ?? "Asia/Kolkata",
-        currency: data.currency ?? "INR",
-        dateFormat: data.dateFormat ?? "DD/MM/YYYY",
-        currentSession: data.currentSession,
-        isActive: true,
-        createdBy: performedBy,
-      },
-    });
+  const school = await prisma.school.create({
+    data: {
+      name: data.name,
+      code,
+      address: data.address,
+      city: data.city,
+      state: data.state,
+      pincode: data.pincode,
+      phone: data.phone,
+      email: data.email,
+      website: data.website,
+      principalName: data.principalName,
+      logoURL: data.logoURL,
+      primaryColor: data.primaryColor ?? "#1a73e8",
+      secondaryColor: data.secondaryColor ?? "#4285f4",
+      subscriptionPlan: initialPlan,
+      subscriptionStatus: initialStatus,
+      subscriptionStartDate,
+      subscriptionEndDate,
+      trialEndDate: trialEnd,
+      maxStudents,
+      maxTeachers,
+      maxStorage: data.maxStorage ?? 1024,
+      timezone: data.timezone ?? "Asia/Kolkata",
+      currency: data.currency ?? "INR",
+      dateFormat: data.dateFormat ?? "DD/MM/YYYY",
+      currentSession: data.currentSession,
+      isActive: true,
+      createdBy: performedBy,
+    },
+  });
 
-    await tx.subscription.create({
-      data: {
-        schoolId: createdSchool.id,
-        plan: initialPlan,
-        status: initialStatus,
-        billingCycle: "monthly",
-        startDate: subscriptionStartDate,
-        endDate: subscriptionEndDate,
-        trialEndDate: initialStatus === "trial" ? trialEndDate : null,
-        autoRenew: createdSchool.autoRenew,
-        amount: 0,
-        currency: createdSchool.currency,
-      },
-    });
+  await createSubscriptionBootstrapSafe({
+    schoolId: school.id,
+    plan: initialPlan,
+    status: initialStatus,
+    subscriptionStartDate,
+    subscriptionEndDate,
+    trialEndDate,
+    autoRenew: school.autoRenew,
+    currency: school.currency,
+  });
 
-    const bootstrapMetadata: Prisma.InputJsonObject = {
-      subscriptionBootstrap: {
-        plan: initialPlan,
-        limits: { maxStudents, maxTeachers },
-      },
-    };
-
-    await tx.schoolConfig.create({
-      data: {
-        schoolId: createdSchool.id,
-        summaryCard: defaultSchoolSummaryCardConfig(),
-        metadata: bootstrapMetadata,
-      },
-    });
-
-    return createdSchool;
+  await createSchoolConfigBootstrapSafe({
+    schoolId: school.id,
+    initialPlan,
+    maxStudents,
+    maxTeachers,
   });
 
   await writeAuditLog("CREATE_SCHOOL", performedBy, school.id, {
