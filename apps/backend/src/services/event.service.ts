@@ -2,12 +2,15 @@ import { prisma } from "../lib/prisma";
 import type { CreateEventInput, UpdateEventInput } from "../schemas/modules.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export async function createEvent(
   schoolId: string,
   data: CreateEventInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const event = await prisma.event.create({
     data: {
       schoolId,
@@ -39,6 +42,8 @@ export async function getEventsBySchool(
   pagination: { limit?: number; cursor?: string; sortBy?: string; sortOrder?: "asc" | "desc" },
   filters: { eventType?: string; upcoming?: boolean } = {}
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId, isActive: true };
 
   if (filters.eventType) where.eventType = filters.eventType;
@@ -71,6 +76,8 @@ export async function getEventsBySchool(
 }
 
 export async function getEventById(eventId: string, schoolId: string) {
+  assertSchoolScope(schoolId);
+
   const event = await prisma.event.findUnique({ where: { id: eventId } });
   if (!event) return null;
   if (event.schoolId !== schoolId) return null;
@@ -84,6 +91,8 @@ export async function updateEvent(
   data: UpdateEventInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.event.findUnique({ where: { id: eventId } });
 
   if (!existing) throw Errors.notFound("Event", eventId);
@@ -108,6 +117,8 @@ export async function softDeleteEvent(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.event.findUnique({ where: { id: eventId } });
 
   if (!existing) return false;

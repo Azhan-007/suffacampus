@@ -5,6 +5,9 @@
 import { prisma } from "../lib/prisma";
 import { writeAuditLog } from "./audit.service";
 import { z } from "zod";
+import { dateTimeFrom, moneyFromInput, moneyToNumber } from "../utils/safe-fields";
+import { assertSchoolScope } from "../lib/tenant-scope";
+import { enforcePlanLimit } from "./plan-limit.service";
 
 export interface ImportError { row: number; field?: string; message: string; }
 export interface ImportResult { total: number; imported: number; skipped: number; errors: ImportError[]; createdIds: string[]; }
@@ -42,15 +45,17 @@ function parseCsvLine(line: string): string[] {
 }
 
 // Validation schemas
-const studentImportSchema = z.object({ firstName: z.string().min(1), lastName: z.string().min(1), dateOfBirth: z.string().min(1), gender: z.enum(["male", "female", "other"]), classId: z.string().optional(), className: z.string().optional(), sectionId: z.string().optional(), rollNumber: z.string().optional(), guardianName: z.string().min(1), guardianPhone: z.string().min(10), guardianEmail: z.string().email().optional().or(z.literal("")), address: z.string().optional(), bloodGroup: z.string().optional(), admissionDate: z.string().optional() });
-const teacherImportSchema = z.object({ firstName: z.string().min(1), lastName: z.string().min(1), email: z.string().email(), phone: z.string().min(10), department: z.string().optional(), subject: z.string().optional(), qualification: z.string().optional(), dateOfBirth: z.string().optional(), gender: z.enum(["male", "female", "other"]).optional(), address: z.string().optional(), joiningDate: z.string().optional() });
-const feeImportSchema = z.object({ studentId: z.string().min(1), feeType: z.string().min(1), amount: z.string().min(1).transform(Number), dueDate: z.string().min(1), description: z.string().optional(), status: z.enum(["pending", "paid", "overdue", "partial"]).optional() });
-const attendanceImportSchema = z.object({ studentId: z.string().min(1), date: z.string().min(1), status: z.enum(["present", "absent", "late", "excused"]), remarks: z.string().optional() });
+const studentImportSchema = z.object({ firstName: z.string().min(1), lastName: z.string().min(1), dateOfBirth: z.string().min(1), gender: z.enum(["male", "female", "other"]), classId: z.string().optional(), className: z.string().optional(), sectionId: z.string().optional(), rollNumber: z.string().optional(), guardianName: z.string().min(1), guardianPhone: z.string().min(10), guardianEmail: z.string().email().optional().or(z.literal("")), address: z.string().optional(), bloodGroup: z.string().optional(), admissionDate: z.string().optional() }).strict();
+const teacherImportSchema = z.object({ firstName: z.string().min(1), lastName: z.string().min(1), email: z.string().email(), phone: z.string().min(10), department: z.string().optional(), subject: z.string().optional(), qualification: z.string().optional(), dateOfBirth: z.string().optional(), gender: z.enum(["male", "female", "other"]).optional(), address: z.string().optional(), joiningDate: z.string().optional() }).strict();
+const feeImportSchema = z.object({ studentId: z.string().min(1), feeType: z.string().min(1), amount: z.string().min(1).transform(Number), dueDate: z.string().min(1), description: z.string().optional(), status: z.enum(["pending", "paid", "overdue", "partial"]).optional() }).strict();
+const attendanceImportSchema = z.object({ studentId: z.string().min(1), date: z.string().min(1), status: z.enum(["present", "absent", "late", "excused"]), remarks: z.string().optional() }).strict();
 
 const schemas: Record<EntityType, z.ZodSchema> = { students: studentImportSchema, teachers: teacherImportSchema, fees: feeImportSchema, attendance: attendanceImportSchema };
 
 export async function bulkImport(params: { entityType: EntityType; schoolId: string; userId: string; rows: Record<string, unknown>[]; skipInvalid?: boolean; }): Promise<ImportResult> {
   const { entityType, schoolId, userId, rows, skipInvalid = true } = params;
+  assertSchoolScope(schoolId);
+
   const schema = schemas[entityType];
   if (!schema) return { total: rows.length, imported: 0, skipped: rows.length, errors: [{ row: 0, message: `Unknown entity type: ${entityType}` }], createdIds: [] };
 
@@ -72,6 +77,10 @@ export async function bulkImport(params: { entityType: EntityType; schoolId: str
 
   if (validRows.length === 0) return { total: rows.length, imported: 0, skipped: rows.length, errors, createdIds: [] };
 
+  if (entityType === "students" || entityType === "teachers") {
+    await enforcePlanLimit(entityType, schoolId, validRows.length);
+  }
+
   // Batch insert via Prisma
   const createdIds: string[] = [];
 
@@ -86,7 +95,22 @@ export async function bulkImport(params: { entityType: EntityType; schoolId: str
           record = await prisma.teacher.create({ data: { ...row.data as any, schoolId, isDeleted: false } });
           break;
         case "fees":
-          record = await prisma.fee.create({ data: { ...row.data as any, schoolId } });
+          {
+            const feeRow = row.data as { amount: number; dueDate: string } & Record<string, unknown>;
+            const dueDate = dateTimeFrom(feeRow.dueDate);
+            if (!dueDate) {
+              throw new Error("Invalid dueDate format");
+            }
+
+            record = await prisma.fee.create({
+              data: {
+                ...feeRow as any,
+                schoolId,
+                amount: moneyFromInput(feeRow.amount),
+                dueDate,
+              },
+            });
+          }
           break;
         case "attendance":
           record = await prisma.attendance.create({ data: { ...row.data as any, schoolId, markedBy: userId } });

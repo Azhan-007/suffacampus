@@ -31,7 +31,31 @@ jest.mock("../../src/lib/prisma", () => ({
     user: {
       findUnique: jest.fn(async () => null),
     },
+    school: {
+      findUnique: jest.fn(async ({ where: { id }, select }) => {
+        if (!id) return null;
+        const school = {
+          id,
+          subscriptionPlan: "free",
+          maxStudents: 200,
+          maxTeachers: 20,
+        };
+        if (!select) return school;
+        const selected: Record<string, unknown> = {};
+        for (const key of Object.keys(select)) {
+          if (select[key]) selected[key] = school[key as keyof typeof school];
+        }
+        return selected;
+      }),
+    },
     class: {
+      count: jest.fn(async ({ where }) =>
+        [...mockState.classes.values()].filter((c) => {
+          if (where?.schoolId && c.schoolId !== where.schoolId) return false;
+          if (typeof where?.isActive !== "undefined" && c.isActive !== where.isActive) return false;
+          return true;
+        }).length
+      ),
       create: jest.fn(async ({ data, include }) => {
         const id = `cls_${mockState.classCounter++}`;
         const classRecord = {
@@ -105,10 +129,37 @@ jest.mock("../../src/lib/prisma", () => ({
         return section;
       }),
       findUnique: jest.fn(async ({ where: { id } }) => mockState.sections.get(id) ?? null),
+      findFirst: jest.fn(async ({ where }) => {
+        return (
+          [...mockState.sections.values()].find((section) => {
+            if (where?.id && section.id !== where.id) return false;
+            if (where?.classId && section.classId !== where.classId) return false;
+            if (where?.class?.schoolId) {
+              const classRecord = mockState.classes.get(section.classId);
+              if (!classRecord || classRecord.schoolId !== where.class.schoolId) return false;
+            }
+            return true;
+          }) ?? null
+        );
+      }),
       delete: jest.fn(async ({ where: { id } }) => {
         const section = mockState.sections.get(id);
         mockState.sections.delete(id);
         return section;
+      }),
+      deleteMany: jest.fn(async ({ where }) => {
+        let count = 0;
+        for (const [id, section] of mockState.sections.entries()) {
+          if (where?.id && section.id !== where.id) continue;
+          if (where?.classId && section.classId !== where.classId) continue;
+          if (where?.class?.schoolId) {
+            const classRecord = mockState.classes.get(section.classId);
+            if (!classRecord || classRecord.schoolId !== where.class.schoolId) continue;
+          }
+          mockState.sections.delete(id);
+          count += 1;
+        }
+        return { count };
       }),
     },
   },

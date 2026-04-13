@@ -1,24 +1,25 @@
 import "dotenv/config";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
+import { PrismaClient } from "@prisma/client";
+import { superadminEnv } from "./src/lib/superadmin-env";
 
 if (!getApps().length) {
   initializeApp({
     credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+      projectId: superadminEnv.FIREBASE_PROJECT_ID,
+      clientEmail: superadminEnv.FIREBASE_CLIENT_EMAIL,
+      privateKey: superadminEnv.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
     }),
   });
 }
 
 const auth = getAuth();
-const db = getFirestore();
+const prisma = new PrismaClient();
 
-const EMAIL = "developeraz07@gmail.com";
-const PASSWORD = "Azhan@SuperAdmin";
-const DISPLAY_NAME = "Azhan";
+const EMAIL = superadminEnv.SUPERADMIN_EMAIL;
+const PASSWORD = superadminEnv.SUPERADMIN_PASSWORD;
+const DISPLAY_NAME = superadminEnv.SUPERADMIN_DISPLAY_NAME || EMAIL.split("@")[0];
 
 async function createSuperAdmin() {
   console.log("🔧 Creating SuperAdmin account...\n");
@@ -53,27 +54,32 @@ async function createSuperAdmin() {
   });
   console.log(`  ✅ Set custom claims: role=SuperAdmin`);
 
-  // 3. Create Firestore user document
-  const now = new Date();
-  await db.collection("users").doc(uid).set(
-    {
-      uid,
+  // 3. Persist superadmin in PostgreSQL (single source of truth)
+  const user = await prisma.user.upsert({
+    where: { uid },
+    update: {
       email: EMAIL,
-      name: DISPLAY_NAME,
       displayName: DISPLAY_NAME,
       role: "SuperAdmin",
-      schoolId: null, // SuperAdmin operates across all schools
+      schoolId: null,
       isActive: true,
-      createdAt: now,
-      updatedAt: now,
+      requirePasswordChange: false,
     },
-    { merge: true }
-  );
-  console.log(`  ✅ Created/updated Firestore user doc: users/${uid}`);
+    create: {
+      uid,
+      email: EMAIL,
+      displayName: DISPLAY_NAME,
+      role: "SuperAdmin",
+      schoolId: null,
+      isActive: true,
+      requirePasswordChange: false,
+    },
+  });
+  console.log(`  ✅ Created/updated Prisma user row: User(uid=${user.uid})`);
 
   console.log("\n🎉 SuperAdmin account ready!");
   console.log(`\n   Email:    ${EMAIL}`);
-  console.log(`   Password: ${PASSWORD}`);
+  console.log("   Password: [SET FROM SUPERADMIN_PASSWORD ENV]");
   console.log(`   Role:     SuperAdmin`);
   console.log(`   UID:      ${uid}`);
   console.log(`\n   You can now log in from the web panel or mobile app.`);
@@ -82,4 +88,6 @@ async function createSuperAdmin() {
 createSuperAdmin().catch((err) => {
   console.error("❌ Failed:", err.message);
   process.exit(1);
+}).finally(async () => {
+  await prisma.$disconnect();
 });

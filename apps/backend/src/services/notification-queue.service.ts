@@ -13,6 +13,7 @@ import {
   type PushNotificationPayload,
 } from "./push-notification.service";
 import { getNotificationQueue, getNotificationQueueConnection } from "./queue";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 const log = pino({ name: "notification-queue" });
 
@@ -129,6 +130,8 @@ function buildEmailHtml(data: NotificationJobData): string {
 }
 
 async function processPush(data: NotificationJobData): Promise<void> {
+  assertSchoolScope(data.schoolId);
+
   if (await hasChannelDelivery(data.notificationId, "PUSH")) {
     log.debug(
       {
@@ -180,6 +183,8 @@ type EmailRecipient = {
 };
 
 async function resolveEmailRecipients(data: NotificationJobData): Promise<EmailRecipient[]> {
+  assertSchoolScope(data.schoolId);
+
   if (data.targetType === "USER") {
     if (!data.targetId) return [];
 
@@ -227,6 +232,8 @@ async function resolveEmailRecipients(data: NotificationJobData): Promise<EmailR
 }
 
 async function processEmail(data: NotificationJobData): Promise<void> {
+  assertSchoolScope(data.schoolId);
+
   if (await hasChannelDelivery(data.notificationId, "EMAIL")) {
     log.debug(
       {
@@ -268,6 +275,8 @@ async function processEmail(data: NotificationJobData): Promise<void> {
 }
 
 async function processNotificationJob(data: NotificationJobData): Promise<void> {
+  assertSchoolScope(data.schoolId);
+
   const [pushResult, emailResult] = await Promise.allSettled([
     processPush(data),
     processEmail(data),
@@ -299,11 +308,15 @@ async function processNotificationJob(data: NotificationJobData): Promise<void> 
 }
 
 export async function enqueueNotificationJob(data: NotificationJobData): Promise<string> {
+  assertSchoolScope(data.schoolId);
+
   if (!hasRedis()) {
     log.warn(
       { notificationId: data.notificationId },
-      "REDIS_URL not set - notification job not enqueued"
+      "REDIS_URL not set - processing notification inline"
     );
+
+    await processNotificationJob(data);
     return data.notificationId;
   }
 
@@ -311,8 +324,10 @@ export async function enqueueNotificationJob(data: NotificationJobData): Promise
   if (!queue) {
     log.warn(
       { notificationId: data.notificationId },
-      "Notification queue unavailable - job not enqueued"
+      "Notification queue unavailable - processing notification inline"
     );
+
+    await processNotificationJob(data);
     return data.notificationId;
   }
 

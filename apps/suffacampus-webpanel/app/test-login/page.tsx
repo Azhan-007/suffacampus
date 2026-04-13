@@ -3,8 +3,13 @@
 import { useState } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
+import { PUBLIC_API_URL } from '@/lib/runtime-config';
+
+const DEBUG_ROUTES_ENABLED = process.env.NODE_ENV !== 'production';
 
 export default function TestLoginPage() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [log, setLog] = useState<string[]>(['Ready. Click the button to test login.']);
 
   const addLog = (msg: string) => {
@@ -12,8 +17,10 @@ export default function TestLoginPage() {
   };
 
   const handleTest = async () => {
-    const email = 'developeraz07@gmail.com';
-    const password = 'Azhan@SuperAdmin';
+    if (!email || !password) {
+      addLog('ERROR: Enter email and password to run this test.');
+      return;
+    }
     
     addLog('Step 1: Calling signInWithEmailAndPassword...');
     
@@ -26,8 +33,7 @@ export default function TestLoginPage() {
       addLog(`Step 2 OK: token=${token.substring(0, 30)}...`);
       
       addLog('Step 3: Calling backend POST /auth/login...');
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
-      const res = await fetch(`${apiUrl}/auth/login`, {
+      const res = await fetch(`${PUBLIC_API_URL}/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -53,9 +59,46 @@ export default function TestLoginPage() {
     }
   };
 
+  if (!DEBUG_ROUTES_ENABLED) {
+    return (
+      <div style={{ padding: 40, fontFamily: 'monospace', maxWidth: 800, margin: '0 auto' }}>
+        <h1 style={{ fontSize: 24, marginBottom: 12 }}>Debug Route Disabled</h1>
+        <p style={{ color: '#475569', lineHeight: 1.6 }}>
+          This route is disabled in production builds and only available in non-production environments.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: 40, fontFamily: 'monospace', maxWidth: 800, margin: '0 auto' }}>
       <h1 style={{ fontSize: 24, marginBottom: 20 }}>Login Debug Test</h1>
+      <div style={{ display: 'grid', gap: 12, marginBottom: 20 }}>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="Email"
+          style={{
+            padding: '10px 12px',
+            borderRadius: 8,
+            border: '1px solid #cbd5e1',
+            fontSize: 14,
+          }}
+        />
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+          style={{
+            padding: '10px 12px',
+            borderRadius: 8,
+            border: '1px solid #cbd5e1',
+            fontSize: 14,
+          }}
+        />
+      </div>
       <button
         onClick={handleTest}
         style={{

@@ -30,9 +30,29 @@ export default async function adminRoutes(server: FastifyInstance) {
     "/admin/schools",
     { preHandler: superAdminHandler },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const result = createSchoolSchema.safeParse(request.body);
+      const rawBody =
+        request.body && typeof request.body === "object"
+          ? (request.body as Record<string, unknown>)
+          : {};
+
+      // Backward compatibility: if older clients only send adminEmail,
+      // use it as the school contact email.
+      const payload: Record<string, unknown> = { ...rawBody };
+      const schoolEmail = typeof payload.email === "string" ? payload.email.trim() : "";
+      const adminEmail = typeof payload.adminEmail === "string" ? payload.adminEmail.trim() : "";
+      if (!schoolEmail && adminEmail) {
+        payload.email = adminEmail;
+      }
+
+      const result = createSchoolSchema.safeParse(payload);
       if (!result.success) {
-        request.log.warn({ fieldErrors: result.error.flatten().fieldErrors, bodyKeys: Object.keys(request.body as object) }, 'School creation validation failed');
+        request.log.warn(
+          {
+            fieldErrors: result.error.flatten().fieldErrors,
+            bodyKeys: Object.keys(payload),
+          },
+          "School creation validation failed"
+        );
         throw Errors.validation(result.error.flatten().fieldErrors);
       }
 
@@ -127,7 +147,7 @@ export default async function adminRoutes(server: FastifyInstance) {
         maxStudents: z.number().int().positive(),
         maxTeachers: z.number().int().positive(),
         maxStorage: z.number().positive(),
-      });
+      }).strict();
 
       const result = schema.safeParse(request.body);
       if (!result.success) throw Errors.validation(result.error.flatten().fieldErrors);

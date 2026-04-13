@@ -6,6 +6,7 @@ import type {
 } from "../schemas/modules.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 // ---------------------------------------------------------------------------
 // Books
@@ -16,6 +17,8 @@ export async function createBook(
   data: CreateBookInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const book = await prisma.book.create({
     data: {
       schoolId,
@@ -48,6 +51,8 @@ export async function getBooksBySchool(
   pagination: { limit?: number; cursor?: string; sortBy?: string; sortOrder?: "asc" | "desc" },
   filters: { category?: string; available?: boolean; search?: string } = {}
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId, isActive: true };
   if (filters.category) where.category = filters.category;
   if (filters.available) where.availableCopies = { gt: 0 };
@@ -78,6 +83,8 @@ export async function getBooksBySchool(
 }
 
 export async function getBookById(bookId: string, schoolId: string) {
+  assertSchoolScope(schoolId);
+
   const book = await prisma.book.findUnique({ where: { id: bookId } });
   if (!book || book.schoolId !== schoolId || !book.isActive) return null;
   return book;
@@ -89,6 +96,8 @@ export async function updateBook(
   data: UpdateBookInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.book.findUnique({ where: { id: bookId } });
   if (!existing) throw Errors.notFound("Book", bookId);
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
@@ -109,6 +118,8 @@ export async function softDeleteBook(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.book.findUnique({ where: { id: bookId } });
   if (!existing || existing.schoolId !== schoolId || !existing.isActive) return false;
 
@@ -127,6 +138,8 @@ export async function issueBook(
   data: LibraryTransactionInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const book = await prisma.book.findUnique({ where: { id: data.bookId } });
   if (!book) throw Errors.notFound("Book", data.bookId);
   if (book.schoolId !== schoolId) throw Errors.tenantMismatch();
@@ -169,6 +182,8 @@ export async function returnBook(
   fine: number | undefined,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const tx = await prisma.libraryTransaction.findUnique({ where: { id: transactionId } });
   if (!tx) throw Errors.notFound("Transaction", transactionId);
   if (tx.schoolId !== schoolId) throw Errors.tenantMismatch();
@@ -207,6 +222,8 @@ export async function getTransactionsBySchool(
   pagination: { limit?: number; cursor?: string },
   filters: { bookId?: string; studentId?: string; status?: string } = {}
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId };
   if (filters.bookId) where.bookId = filters.bookId;
   if (filters.studentId) where.studentId = filters.studentId;
@@ -231,6 +248,8 @@ export async function getTransactionsBySchool(
 }
 
 export async function getLibraryStats(schoolId: string) {
+  assertSchoolScope(schoolId);
+
   const [bookStats, categoryCounts] = await Promise.all([
     prisma.book.aggregate({
       where: { schoolId, isActive: true },

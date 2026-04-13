@@ -3,22 +3,31 @@
  * Run this script once to create test accounts in Firebase Auth and Firestore
  */
 
+import "dotenv/config";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value.trim();
+}
+
 const testUsers = [
   {
-    email: "student@test.com",
-    password: "password123",
+    email: requireEnv("TEST_STUDENT_EMAIL"),
+    password: requireEnv("TEST_STUDENT_PASSWORD"),
     role: "student",
-    name: "Test Student",
+    name: process.env.TEST_STUDENT_NAME?.trim() || "Test Student",
   },
   {
-    email: "teacher@test.com",
-    password: "password123",
+    email: requireEnv("TEST_TEACHER_EMAIL"),
+    password: requireEnv("TEST_TEACHER_PASSWORD"),
     role: "teacher",
-    name: "Test Teacher",
+    name: process.env.TEST_TEACHER_NAME?.trim() || "Test Teacher",
   },
 ];
 
@@ -56,12 +65,12 @@ async function setupTestUsers() {
   }
 
   console.log("âœ¨ Setup complete!");
-  console.log("\nTest Credentials:");
-  console.log("â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€");
+  console.log("\nCreated users:");
+  console.log("â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€");
   testUsers.forEach((user) => {
     console.log(`${user.role.toUpperCase()}:`);
     console.log(`  Email: ${user.email}`);
-    console.log(`  Password: ${user.password}\n`);
+    console.log("  Password: [SET FROM ENV]\n");
   });
 }
 

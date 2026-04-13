@@ -1,4 +1,5 @@
 import { prisma } from "../lib/prisma";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export type FcmDeviceTokenContext = {
   userId: string;
@@ -9,6 +10,8 @@ export async function registerFcmDeviceToken(
   token: string,
   context: FcmDeviceTokenContext
 ) {
+  assertSchoolScope(context.schoolId);
+
   const existing = await prisma.deviceToken.findFirst({
     where: {
       token,
@@ -45,6 +48,8 @@ export async function removeFcmDeviceToken(
   token: string,
   context: FcmDeviceTokenContext
 ) {
+  assertSchoolScope(context.schoolId);
+
   const result = await prisma.deviceToken.deleteMany({
     where: {
       token,

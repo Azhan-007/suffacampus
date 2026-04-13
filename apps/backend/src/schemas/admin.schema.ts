@@ -28,7 +28,7 @@ export const bulkAttendanceEntrySchema = z.object({
   studentId: z.string().min(1, "Student ID is required"),
   status: AttendanceStatusExtended,
   remarks: z.string().max(200).optional(),
-});
+}).strict();
 
 export const bulkAttendanceSchema = z.object({
   classId: z.string().min(1, "Class ID is required"),
@@ -40,7 +40,7 @@ export const bulkAttendanceSchema = z.object({
     .array(bulkAttendanceEntrySchema)
     .min(1, "At least one attendance entry is required")
     .max(200, "Maximum 200 entries per bulk request"),
-});
+}).strict();
 
 export type BulkAttendanceInput = z.infer<typeof bulkAttendanceSchema>;
 export type BulkAttendanceEntry = z.infer<typeof bulkAttendanceEntrySchema>;
@@ -66,9 +66,9 @@ export const createSchoolSchema = z.object({
   subscriptionPlan: z.enum(["free", "basic", "pro", "enterprise"]).default("free"),
   subscriptionStatus: z.enum(["active", "trial", "expired", "cancelled", "past_due"]).default("trial"),
   trialEndDate: z.string().optional(),
-  maxStudents: z.number().int().min(1).default(50),
-  maxTeachers: z.number().int().min(1).default(10),
-  maxStorage: z.number().min(1).default(500), // MB
+  maxStudents: z.number().int().min(1).default(200),
+  maxTeachers: z.number().int().min(1).default(20),
+  maxStorage: z.number().min(1).default(1024), // MB
   timezone: z.string().max(50).default("Asia/Kolkata"),
   currency: z.string().max(5).default("INR"),
   dateFormat: z.string().max(20).default("DD/MM/YYYY"),
@@ -82,7 +82,7 @@ export const createSchoolSchema = z.object({
   subscriptionEndDate: z.string().optional(),
   isActive: z.boolean().optional(),
   createdBy: z.string().optional(),
-});
+}).strict();
 
 export const updateSchoolSchema = createSchoolSchema.partial();
 
@@ -97,19 +97,19 @@ export const createUserSchema = z.object({
   email: z.string().email("Invalid email"),
   password: z.string().min(8, "Password must be at least 8 characters"),
   displayName: z.string().min(1, "Name is required").max(200).trim(),
-  role: z.enum(["Admin", "Teacher", "Staff", "SuperAdmin"]),
+  role: z.enum(["Admin", "Teacher", "Staff"]),
   phone: z.string().max(20).optional(),
   photoURL: z.string().url().optional(),
   isActive: z.boolean().default(true),
-});
+}).strict();
 
 export const updateUserSchema = z.object({
   displayName: z.string().min(1).max(200).trim().optional(),
-  role: z.enum(["Admin", "Teacher", "Staff", "SuperAdmin"]).optional(),
+  role: z.enum(["Admin", "Teacher", "Staff"]).optional(),
   phone: z.string().max(20).optional(),
   photoURL: z.string().url().optional(),
   isActive: z.boolean().optional(),
-});
+}).strict();
 
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;

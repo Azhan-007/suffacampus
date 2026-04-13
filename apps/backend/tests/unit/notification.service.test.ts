@@ -219,12 +219,13 @@ describe("createNotification", () => {
       context
     );
 
-    expect(notification.schoolId).toBe("school_1");
-    expect(notification.targetType).toBe("USER");
-    expect(notification.targetId).toBe("user_2");
-    expect(notification.referenceType).toBe("FEE");
-    expect(notification.referenceId).toBe("fee_1");
-    expect(notification.createdBy).toBe("user_1");
+    expect(notification).not.toBeNull();
+    expect(notification!.schoolId).toBe("school_1");
+    expect(notification!.targetType).toBe("USER");
+    expect(notification!.targetId).toBe("user_2");
+    expect(notification!.referenceType).toBe("FEE");
+    expect(notification!.referenceId).toBe("fee_1");
+    expect(notification!.createdBy).toBe("user_1");
   });
 
   it("creates a ROLE notification", async () => {
@@ -239,8 +240,9 @@ describe("createNotification", () => {
       context
     );
 
-    expect(notification.targetType).toBe("ROLE");
-    expect(notification.targetId).toBe("Admin");
+    expect(notification).not.toBeNull();
+    expect(notification!.targetType).toBe("ROLE");
+    expect(notification!.targetId).toBe("Admin");
   });
 
   it("creates a SCHOOL notification", async () => {
@@ -254,8 +256,9 @@ describe("createNotification", () => {
       context
     );
 
-    expect(notification.targetType).toBe("SCHOOL");
-    expect(notification.targetId).toBeNull();
+    expect(notification).not.toBeNull();
+    expect(notification!.targetType).toBe("SCHOOL");
+    expect(notification!.targetId).toBeNull();
   });
 
   it("rejects USER notification without targetId", async () => {
@@ -284,8 +287,9 @@ describe("createNotification", () => {
       context
     );
 
-    expect(notification.targetType).toBe("ROLE");
-    expect(notification.targetId).toBe("Teacher");
+    expect(notification).not.toBeNull();
+    expect(notification!.targetType).toBe("ROLE");
+    expect(notification!.targetId).toBe("Teacher");
   });
 
   it("rejects SCHOOL notification with targetId", async () => {

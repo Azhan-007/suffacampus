@@ -16,6 +16,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import crypto from "crypto";
 import client, {
   Registry,
   Counter,
@@ -327,6 +328,61 @@ export function resetMetrics(): void {
   register.resetMetrics();
 }
 
+function timingSafeTokenMatch(actual: string, expected: string): boolean {
+  const actualBytes = Buffer.from(actual, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+
+  if (actualBytes.length !== expectedBytes.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function verifyMetricsAccess(
+  request: FastifyRequest,
+  reply: FastifyReply
+): boolean {
+  const metricsToken = process.env.METRICS_AUTH_TOKEN?.trim();
+
+  if (!metricsToken) {
+    void reply.status(503).send({
+      success: false,
+      error: {
+        code: "METRICS_DISABLED",
+        message: "Metrics endpoint is disabled until METRICS_AUTH_TOKEN is configured",
+      },
+    });
+    return false;
+  }
+
+  const auth = request.headers.authorization;
+  if (!auth || !auth.startsWith("Bearer ")) {
+    void reply.status(401).send({
+      success: false,
+      error: {
+        code: "UNAUTHORIZED",
+        message: "Bearer metrics token is required",
+      },
+    });
+    return false;
+  }
+
+  const providedToken = auth.slice(7).trim();
+  if (!timingSafeTokenMatch(providedToken, metricsToken)) {
+    void reply.status(401).send({
+      success: false,
+      error: {
+        code: "UNAUTHORIZED",
+        message: "Invalid metrics token",
+      },
+    });
+    return false;
+  }
+
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Fastify plugin
 // ---------------------------------------------------------------------------
@@ -359,15 +415,8 @@ export async function metricsPlugin(server: FastifyInstance) {
 
   // ---------- Prometheus text endpoint ----------
   server.get("/metrics", async (request, reply) => {
-    const metricsToken = process.env.METRICS_AUTH_TOKEN;
-    if (metricsToken) {
-      const auth = request.headers.authorization;
-      if (auth !== `Bearer ${metricsToken}`) {
-        return reply.status(401).send({
-          success: false,
-          error: { code: "UNAUTHORIZED", message: "Invalid metrics token" },
-        });
-      }
+    if (!verifyMetricsAccess(request, reply)) {
+      return;
     }
 
     await refreshQueueMetrics();
@@ -378,15 +427,8 @@ export async function metricsPlugin(server: FastifyInstance) {
 
   // ---------- JSON snapshot endpoint (legacy / dashboards) ----------
   server.get("/metrics/json", async (request, reply) => {
-    const metricsToken = process.env.METRICS_AUTH_TOKEN;
-    if (metricsToken) {
-      const auth = request.headers.authorization;
-      if (auth !== `Bearer ${metricsToken}`) {
-        return reply.status(401).send({
-          success: false,
-          error: { code: "UNAUTHORIZED", message: "Invalid metrics token" },
-        });
-      }
+    if (!verifyMetricsAccess(request, reply)) {
+      return;
     }
 
     const queueStats = await refreshQueueMetrics();

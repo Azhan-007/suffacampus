@@ -4,12 +4,15 @@
  */
 
 import { prisma } from "../lib/prisma";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export class SchoolConfigService {
   /**
    * Get or create school config
    */
   static async getConfig(schoolId: string) {
+    assertSchoolScope(schoolId);
+
     let config = await prisma.schoolConfig.findUnique({
       where: { schoolId },
     });
@@ -41,6 +44,8 @@ export class SchoolConfigService {
     schoolId: string,
     data: Record<string, unknown>
   ) {
+    assertSchoolScope(schoolId);
+
     const config = await this.getConfig(schoolId);
 
     return prisma.schoolConfig.update({
@@ -55,6 +60,8 @@ export class SchoolConfigService {
    * Get summary card config
    */
   static async getSummaryCard(schoolId: string) {
+    assertSchoolScope(schoolId);
+
     const config = await this.getConfig(schoolId);
     return config.summaryCard || {
       enabled: true,
@@ -71,6 +78,8 @@ export class SchoolConfigService {
    * Update metadata
    */
   static async updateMetadata(schoolId: string, metadata: Record<string, unknown>) {
+    assertSchoolScope(schoolId);
+
     const config = await this.getConfig(schoolId);
 
     return prisma.schoolConfig.update({

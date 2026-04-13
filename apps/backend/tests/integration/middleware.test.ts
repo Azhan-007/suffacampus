@@ -11,12 +11,17 @@ import { authenticate } from "../../src/middleware/auth";
 import { tenantGuard } from "../../src/middleware/tenant";
 import { roleMiddleware } from "../../src/middleware/role";
 import { requirePermission } from "../../src/middleware/permission";
+import { validateSessionAccessToken } from "../../src/services/session.service";
 import {
   auth,
   resetFirestoreMock,
   seedDoc,
 } from "../__mocks__/firebase-admin";
 import { AppError } from "../../src/errors";
+
+jest.mock("../../src/services/session.service", () => ({
+  validateSessionAccessToken: jest.fn().mockResolvedValue(null),
+}));
 
 jest.mock("../../src/lib/prisma", () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -53,10 +58,16 @@ let server: FastifyInstance;
 
 // Cast auth.verifyIdToken to a jest mock for easy control
 const mockVerifyIdToken = auth.verifyIdToken as jest.Mock;
+const mockValidateSessionAccessToken =
+  validateSessionAccessToken as jest.MockedFunction<
+    typeof validateSessionAccessToken
+  >;
 
 beforeEach(async () => {
   resetFirestoreMock();
   mockVerifyIdToken.mockReset();
+  mockValidateSessionAccessToken.mockReset();
+  mockValidateSessionAccessToken.mockResolvedValue(null);
 
   server = Fastify({ logger: false });
 
@@ -175,6 +186,131 @@ describe("authenticate middleware", () => {
     expect(body.success).toBe(true);
     expect(body.user.uid).toBe("user_1");
     expect(body.user.role).toBe("Admin");
+  });
+
+  it("authenticates from session JWT when tenant school matches", async () => {
+    mockValidateSessionAccessToken.mockResolvedValueOnce({
+      id: "sess_1",
+      userUid: "user_1",
+      schoolId: "school_1",
+      jti: "jti_1",
+      device: "Web",
+      ipAddress: "127.0.0.1",
+      userAgent: "Jest",
+      lastActiveAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    seedDoc("users", "user_1", {
+      uid: "user_1",
+      email: "admin@school.com",
+      role: "Admin",
+      schoolId: "school_1",
+      isActive: true,
+    });
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/test",
+      headers: { authorization: "Bearer valid_session_jwt" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockVerifyIdToken).not.toHaveBeenCalled();
+  });
+
+  it("rejects session JWT when tenant school mismatches user school", async () => {
+    mockValidateSessionAccessToken.mockResolvedValueOnce({
+      id: "sess_2",
+      userUid: "user_1",
+      schoolId: "school_2",
+      jti: "jti_2",
+      device: "Web",
+      ipAddress: "127.0.0.1",
+      userAgent: "Jest",
+      lastActiveAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    seedDoc("users", "user_1", {
+      uid: "user_1",
+      email: "admin@school.com",
+      role: "Admin",
+      schoolId: "school_1",
+      isActive: true,
+    });
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/test",
+      headers: { authorization: "Bearer mismatched_session_jwt" },
+    });
+
+    expect(res.statusCode).toBe(401);
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe("AUTH_TOKEN_INVALID");
+  });
+
+  it("rejects session JWT without school binding for non-superadmin user", async () => {
+    mockValidateSessionAccessToken.mockResolvedValueOnce({
+      id: "sess_3",
+      userUid: "user_1",
+      schoolId: null,
+      jti: "jti_3",
+      device: "Web",
+      ipAddress: "127.0.0.1",
+      userAgent: "Jest",
+      lastActiveAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    seedDoc("users", "user_1", {
+      uid: "user_1",
+      email: "admin@school.com",
+      role: "Admin",
+      schoolId: "school_1",
+      isActive: true,
+    });
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/test",
+      headers: { authorization: "Bearer unbound_session_jwt" },
+    });
+
+    expect(res.statusCode).toBe(401);
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe("AUTH_TOKEN_INVALID");
+  });
+
+  it("allows superadmin session JWT without school binding", async () => {
+    mockValidateSessionAccessToken.mockResolvedValueOnce({
+      id: "sess_4",
+      userUid: "user_1",
+      schoolId: null,
+      jti: "jti_4",
+      device: "Web",
+      ipAddress: "127.0.0.1",
+      userAgent: "Jest",
+      lastActiveAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    seedDoc("users", "user_1", {
+      uid: "user_1",
+      email: "superadmin@test.com",
+      role: "SuperAdmin",
+      schoolId: null,
+      isActive: true,
+    });
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/test",
+      headers: { authorization: "Bearer superadmin_session_jwt" },
+    });
+
+    expect(res.statusCode).toBe(200);
   });
 });
 

@@ -4,6 +4,13 @@ import type { CreateStudentInput } from "../schemas/student.schema";
 import type { UpdateStudentInput } from "../schemas/update.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { createLogger } from "../utils/logger";
+import {
+  assertSchoolScope,
+} from "../lib/tenant-scope";
+import { enforcePlanLimit } from "./plan-limit.service";
+
+const log = createLogger("student-service");
 
 export interface StudentCredentials {
   username: string;
@@ -91,6 +98,19 @@ function enforceStudentOwnership(
   }
 }
 
+async function writeStudentAuditLogSafe(
+  action: string,
+  userId: string,
+  schoolId: string,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  try {
+    await writeAuditLog(action, userId, schoolId, metadata);
+  } catch (error) {
+    log.error({ err: error, action, userId, schoolId }, "Failed to write student audit log");
+  }
+}
+
 /** Generate a simple readable password for new student accounts: FirstName@123 */
 function buildSimplePassword(firstName: string): string {
   const name =
@@ -115,6 +135,8 @@ async function provisionStudentAuth(
   student: { id: string; firstName: string; lastName: string; rollNumber: string },
   schoolId: string
 ): Promise<StudentCredentials> {
+  assertSchoolScope(schoolId);
+
   const username = buildUsername(student.firstName, student.lastName);
   const email = `${username}.${schoolId}@SuffaCampus.internal`;
   const tempPassword = buildSimplePassword(student.firstName);
@@ -173,6 +195,9 @@ export async function createStudent(
   data: CreateStudentInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+  await enforcePlanLimit("students", schoolId);
+
   const student = await prisma.student.create({
     data: {
       schoolId,
@@ -185,7 +210,7 @@ export async function createStudent(
   // Auto-provision login credentials
   const credentials = await provisionStudentAuth(student, schoolId);
 
-  await writeAuditLog("CREATE_STUDENT", performedBy, schoolId, {
+  await writeStudentAuditLogSafe("STUDENT_CREATED", performedBy, schoolId, {
     studentId: student.id,
     firstName: student.firstName,
     lastName: student.lastName,
@@ -205,6 +230,8 @@ export async function getStudentsBySchool(
   filters: { classId?: string; sectionId?: string; gender?: string; status?: string; search?: string } = {},
   context?: StudentAccessContext
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId, isDeleted: false };
 
   if (filters.classId) where.classId = filters.classId;
@@ -262,6 +289,8 @@ export async function getStudentsBySchool(
  * Get all students for a school (unpaginated â€” internal use, e.g. counts).
  */
 export async function getAllStudentsBySchool(schoolId: string) {
+  assertSchoolScope(schoolId);
+
   return prisma.student.findMany({
     where: { schoolId, isDeleted: false },
     orderBy: { createdAt: "desc" },
@@ -273,6 +302,8 @@ export async function getStudentById(
   schoolId: string,
   context?: StudentAccessContext
 ) {
+  assertSchoolScope(schoolId);
+
   const student = await prisma.student.findUnique({ where: { id: studentId } });
 
   if (!student) return null;
@@ -293,6 +324,8 @@ export async function updateStudent(
   data: UpdateStudentInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.student.findUnique({ where: { id: studentId } });
 
   if (!existing) throw Errors.notFound("Student", studentId);
@@ -320,6 +353,8 @@ export async function softDeleteStudent(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const student = await prisma.student.findUnique({ where: { id: studentId } });
 
   if (!student) return false;
@@ -352,6 +387,8 @@ export async function permanentDeleteStudent(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const student = await prisma.student.findUnique({ where: { id: studentId } });
 
   if (!student) return false;

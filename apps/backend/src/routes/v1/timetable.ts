@@ -17,7 +17,7 @@ import { tenantGuard } from "../../middleware/tenant";
 import { roleMiddleware } from "../../middleware/role";
 import { sendSuccess, sendPaginated } from "../../utils/response";
 import { Errors } from "../../errors";
-import { firestore } from "../../lib/firebase-admin";
+import { prisma } from "../../lib/prisma";
 
 const preHandler = [authenticate, tenantGuard];
 
@@ -60,25 +60,23 @@ export default async function timetableRoutes(server: FastifyInstance) {
       const { teacherId } = request.params;
       const { day } = request.query;
 
-      let query: FirebaseFirestore.Query = firestore
-        .collection("timetables")
-        .where("schoolId", "==", request.schoolId)
-        .where("isDeleted", "==", false);
-
-      if (day) query = query.where("day", "==", day);
-
-      const snapshot = await query.get();
-      const results: Array<Record<string, unknown>> = [];
-
-      for (const doc of snapshot.docs) {
-        const data = doc.data();
-        const periods = (data.periods || []).filter(
-          (p: { teacherId?: string }) => p.teacherId === teacherId
-        );
-        if (periods.length > 0) {
-          results.push({ ...data, periods });
-        }
-      }
+      const results = await prisma.timetable.findMany({
+        where: {
+          schoolId: request.schoolId,
+          isActive: true,
+          ...(day ? { day } : {}),
+          periods: {
+            some: { teacherId },
+          },
+        },
+        include: {
+          periods: {
+            where: { teacherId },
+            orderBy: { periodNumber: "asc" },
+          },
+        },
+        orderBy: { day: "asc" },
+      });
 
       return sendSuccess(request, reply, results);
     }

@@ -9,14 +9,22 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { auth as firebaseAuth, firestore } from "../../lib/firebase-admin";
+import { auth as firebaseAuth } from "../../lib/firebase-admin";
 import { prisma } from "../../lib/prisma";
 import { enterCriticalLaneOrReplyOverloaded } from "../../lib/overload";
 import { authenticate } from "../../middleware/auth";
 import { recordAuthLookupCacheEvent } from "../../plugins/metrics";
+import { authRateLimitConfig } from "../../plugins/rateLimit";
 import { sendSuccess } from "../../utils/response";
 import { Errors } from "../../errors";
 import { writeAuditLog } from "../../services/audit.service";
+import {
+  createSessionWithAccessToken,
+  decodeSessionAccessToken,
+  revokeAllSessionsForUser,
+  revokeSessionById,
+  revokeTokenByJti,
+} from "../../services/session.service";
 
 async function generateUniqueSchoolCode(schoolName: string): Promise<string> {
   const prefix = schoolName
@@ -38,23 +46,13 @@ export default async function authRoutes(server: FastifyInstance) {
   const USERNAME_LOOKUP_TTL_SECONDS = 60;
   const SCHOOL_LOOKUP_TTL_SECONDS = 120;
 
-  // Stricter rate limiting for auth routes (brute-force protection)
-  const authRateLimit = {
-    config: {
-      rateLimit: {
-        max: 5,
-        timeWindow: "1 minute",
-      },
-    },
-  };
-
   /**
    * Resolve a username to email + role so the mobile app can call
    * Firebase signInWithEmailAndPassword.
    */
   server.get<{ Querystring: { username?: string } }>(
     "/auth/user-by-username",
-    authRateLimit,
+    authRateLimitConfig,
     async (
       request: FastifyRequest<{ Querystring: { username?: string } }>,
       reply: FastifyReply
@@ -108,38 +106,6 @@ export default async function authRoutes(server: FastifyInstance) {
         return sendSuccess(request, reply, payload);
       }
 
-      if (process.env.NODE_ENV === "test") {
-        const snapshot = await firestore
-          .collection("users")
-          .where("username", "==", username)
-          .limit(1)
-          .get();
-
-        if (!snapshot.empty) {
-          const data = snapshot.docs[0].data();
-          const payload = {
-            email: (data.email as string | undefined) ?? "",
-            role: (data.role as string | undefined) ?? "",
-            name:
-              (data.displayName as string | undefined) ??
-              (data.name as string | undefined) ??
-              "",
-            studentId: (data.studentId as string | undefined) ?? null,
-            teacherId: (data.teacherId as string | undefined) ?? null,
-            requirePasswordChange:
-              (data.requirePasswordChange as boolean | undefined) ?? false,
-          };
-
-          server.cache?.setWithTTL(
-            "user",
-            usernameCacheKey,
-            payload,
-            USERNAME_LOOKUP_TTL_SECONDS
-          );
-          return sendSuccess(request, reply, payload);
-        }
-      }
-
       throw Errors.notFound("User");
       } finally {
         release();
@@ -152,7 +118,7 @@ export default async function authRoutes(server: FastifyInstance) {
    */
   server.get<{ Querystring: { code?: string } }>(
     "/auth/schools",
-    authRateLimit,
+    authRateLimitConfig,
     async (
       request: FastifyRequest<{ Querystring: { code?: string } }>,
       reply: FastifyReply
@@ -215,48 +181,6 @@ export default async function authRoutes(server: FastifyInstance) {
         return sendSuccess(request, reply, payload);
       }
 
-      if (process.env.NODE_ENV === "test") {
-        const snapshot = await firestore
-          .collection("schools")
-          .where("code", "==", code)
-          .limit(1)
-          .get();
-
-        if (!snapshot.empty) {
-          const data = snapshot.docs[0].data();
-          const isActive = (data.isActive as boolean | undefined) ?? true;
-
-          if (isActive) {
-            const payload = {
-              id: (data.id as string | undefined) ?? snapshot.docs[0].id,
-              name: (data.name as string | undefined) ?? "",
-              code: (data.code as string | undefined) ?? code,
-              tagline:
-                (data.loginTagline as string | undefined) ??
-                (data.tagline as string | undefined) ??
-                undefined,
-              supportEmail: (data.email as string | undefined) ?? undefined,
-              supportPhone: (data.phone as string | undefined) ?? undefined,
-              helpUrl: (data.website as string | undefined) ?? undefined,
-              address: (data.address as string | undefined) ?? undefined,
-              logoUrl:
-                (data.logoURL as string | undefined) ??
-                (data.logoUrl as string | undefined) ??
-                undefined,
-              primaryColor: (data.primaryColor as string | undefined) ?? undefined,
-            };
-
-            server.cache?.setWithTTL(
-              "school",
-              schoolCacheKey,
-              payload,
-              SCHOOL_LOOKUP_TTL_SECONDS
-            );
-            return sendSuccess(request, reply, payload);
-          }
-        }
-      }
-
       throw Errors.notFound("School");
       } finally {
         release();
@@ -276,11 +200,11 @@ export default async function authRoutes(server: FastifyInstance) {
         /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
         "Password must contain at least one uppercase letter, one lowercase letter, and one digit"
       ),
-  });
+  }).strict();
 
   server.post(
     "/auth/change-password",
-    { preHandler: [authenticate] },
+    { ...authRateLimitConfig, preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const parsed = changePasswordSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -311,7 +235,7 @@ export default async function authRoutes(server: FastifyInstance) {
   // -----------------------------------------------------------------------
   server.get(
     "/auth/me",
-    { preHandler: [authenticate] },
+    { ...authRateLimitConfig, preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const user = request.user!;
       return sendSuccess(request, reply, {
@@ -339,7 +263,7 @@ export default async function authRoutes(server: FastifyInstance) {
   // -----------------------------------------------------------------------
   server.post(
     "/auth/login",
-    { preHandler: [authenticate] },
+    { ...authRateLimitConfig, preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const release = enterCriticalLaneOrReplyOverloaded(
         request,
@@ -379,9 +303,26 @@ export default async function authRoutes(server: FastifyInstance) {
           ? user.schoolId
           : "platform";
 
-      void writeAuditLog("LOGIN", uid, auditSchoolId, {
-        role: user.role ?? null,
-        email: user.email,
+      try {
+        await writeAuditLog("USER_LOGIN", uid, auditSchoolId, {
+          role: user.role ?? null,
+          email: user.email,
+        });
+      } catch (error) {
+        request.log.error(
+          { err: error, uid, schoolId: auditSchoolId },
+          "Failed to write USER_LOGIN audit log"
+        );
+      }
+
+      const { accessToken, session } = await createSessionWithAccessToken({
+        userUid: uid,
+        schoolId:
+          typeof user.schoolId === "string" && user.schoolId.trim().length > 0
+            ? user.schoolId
+            : null,
+        role: typeof user.role === "string" ? user.role : null,
+        request,
       });
 
       return sendSuccess(request, reply, {
@@ -396,10 +337,144 @@ export default async function authRoutes(server: FastifyInstance) {
         requirePasswordChange: user.requirePasswordChange ?? false,
         createdAt: user.createdAt ?? null,
         lastLogin: nowIso,
+        accessToken,
+        session: {
+          id: session.id,
+          device: session.device,
+          ipAddress: session.ipAddress,
+          userAgent: session.userAgent,
+          lastActiveAt: session.lastActiveAt,
+          expiresAt: session.expiresAt,
+        },
       });
       } finally {
         release();
       }
+    }
+  );
+
+  const revokeTokenSchema = z.object({
+    token: z.string().min(1).optional(),
+    jti: z.string().min(1).optional(),
+    sessionId: z.string().min(1).optional(),
+    reason: z.string().min(1).max(120).optional(),
+  }).strict();
+
+  // -----------------------------------------------------------------------
+  // POST /api/v1/auth/logout — logout current session
+  // -----------------------------------------------------------------------
+  server.post(
+    "/auth/logout",
+    { ...authRateLimitConfig, preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      if (request.session?.source !== "session-jwt") {
+        throw Errors.badRequest(
+          "Session JWT is required to logout the current session"
+        );
+      }
+
+      const revoked = await revokeSessionById({
+        sessionId: request.session.id,
+        userUid: request.user.uid,
+        schoolId:
+          typeof request.user.schoolId === "string"
+            ? request.user.schoolId
+            : undefined,
+        reason: "logout_current",
+      });
+
+      if (!revoked) {
+        throw Errors.notFound("Session", request.session.id);
+      }
+
+      return sendSuccess(request, reply, {
+        revoked: true,
+        sessionId: request.session.id,
+      });
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // POST /api/v1/auth/logout-all — logout all sessions for current user
+  // -----------------------------------------------------------------------
+  server.post(
+    "/auth/logout-all",
+    { ...authRateLimitConfig, preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const result = await revokeAllSessionsForUser({
+        userUid: request.user.uid,
+        schoolId:
+          typeof request.user.schoolId === "string"
+            ? request.user.schoolId
+            : undefined,
+        reason: "logout_all",
+      });
+
+      return sendSuccess(request, reply, {
+        revoked: true,
+        revokedCount: result.revokedCount,
+      });
+    }
+  );
+
+  // -----------------------------------------------------------------------
+  // POST /api/v1/auth/revoke-token — revoke a JWT by token or jti
+  // -----------------------------------------------------------------------
+  server.post(
+    "/auth/revoke-token",
+    { ...authRateLimitConfig, preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = revokeTokenSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw Errors.validation(parsed.error.flatten().fieldErrors);
+      }
+
+      let jti = parsed.data.jti;
+      let sessionId = parsed.data.sessionId;
+
+      if (parsed.data.token) {
+        const decoded = decodeSessionAccessToken(parsed.data.token);
+        if (!decoded) {
+          throw Errors.badRequest("Provided token is not a valid session JWT");
+        }
+
+        if (decoded.sub !== request.user.uid) {
+          throw Errors.tokenInvalid();
+        }
+
+        jti = decoded.jti;
+        sessionId = decoded.sid;
+      }
+
+      if (!jti) {
+        if (request.session?.source !== "session-jwt") {
+          throw Errors.badRequest("Provide token or jti to revoke");
+        }
+
+        jti = request.session.jti;
+        sessionId = request.session.id;
+      }
+
+      const revoked = await revokeTokenByJti({
+        jti,
+        sessionId,
+        userUid: request.user.uid,
+        schoolId:
+          typeof request.user.schoolId === "string"
+            ? request.user.schoolId
+            : undefined,
+        reason: parsed.data.reason,
+      });
+
+      if (!revoked && sessionId) {
+        throw Errors.notFound("Session", sessionId);
+      }
+
+      return sendSuccess(request, reply, {
+        revoked: true,
+        jti,
+        sessionId: sessionId ?? null,
+      });
     }
   );
 
@@ -422,11 +497,11 @@ export default async function authRoutes(server: FastifyInstance) {
       ),
     phone: z.string().max(20).optional(),
     city: z.string().min(1).max(100).trim().default(""),
-  });
+  }).strict();
 
   server.post(
     "/auth/register",
-    authRateLimit,
+    authRateLimitConfig,
     async (request: FastifyRequest, reply: FastifyReply) => {
       const parsed = registerSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -475,8 +550,8 @@ export default async function authRoutes(server: FastifyInstance) {
               trialEndDate,
               autoRenew: false,
               paymentFailureCount: 0,
-              maxStudents: 50,
-              maxTeachers: 5,
+              maxStudents: 200,
+              maxTeachers: 20,
               maxStorage: 1024,
               timezone: "Asia/Kolkata",
               currency: "INR",
@@ -508,6 +583,48 @@ export default async function authRoutes(server: FastifyInstance) {
               autoRenew: false,
               amount: 0,
               currency: "INR",
+            },
+          });
+
+          await tx.schoolConfig.create({
+            data: {
+              schoolId: school.id,
+              summaryCard: {
+                enabled: true,
+                title: "Today's Summary",
+                items: {
+                  classesToday: {
+                    enabled: true,
+                    label: "Classes",
+                    icon: "book-open-variant",
+                    color: "#4C6EF5",
+                    route: "/teacher/schedule",
+                  },
+                  classesCompleted: {
+                    enabled: true,
+                    label: "Completed",
+                    icon: "check-circle",
+                    color: "#10B981",
+                    route: "/teacher/schedule",
+                  },
+                  totalStudents: {
+                    enabled: true,
+                    label: "Students",
+                    icon: "account-group",
+                    color: "#F59E0B",
+                    route: "/teacher/attendance",
+                  },
+                },
+              },
+              metadata: {
+                subscriptionBootstrap: {
+                  plan: "free",
+                  limits: {
+                    maxStudents: 200,
+                    maxTeachers: 20,
+                  },
+                },
+              },
             },
           });
 

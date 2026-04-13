@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import pino from "pino";
 import { writeAuditLog } from "./audit.service";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 const log = pino({ name: "subscription" });
 
@@ -36,6 +37,8 @@ export async function transitionStatus(
   metadata: Record<string, unknown> = {},
   performedBy = "system"
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const school = await prisma.school.findUnique({ where: { id: schoolId } });
 
   if (!school) return false;
@@ -152,6 +155,8 @@ export async function cancelSubscription(
   schoolId: string,
   performedBy: string
 ): Promise<{ cancelEffectiveDate: string }> {
+  assertSchoolScope(schoolId);
+
   const school = await prisma.school.findUnique({ where: { id: schoolId } });
 
   if (!school) throw new Error("School not found");
@@ -184,6 +189,8 @@ export async function reactivateSubscription(
   periodDays: number,
   performedBy = "system"
 ): Promise<void> {
+  assertSchoolScope(schoolId);
+
   const now = new Date();
   const periodEnd = new Date(now.getTime() + periodDays * 24 * 60 * 60 * 1000);
 

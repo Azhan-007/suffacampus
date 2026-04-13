@@ -1,6 +1,11 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { createOrder } from "../../services/payment.service";
+import {
+  createOrder,
+  normalizePlanCode,
+  resolveSubscriptionAmountPaise,
+  verifyPaymentAndPersist,
+} from "../../services/payment.service";
 import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/auth";
 import { tenantGuard } from "../../middleware/tenant";
@@ -13,23 +18,26 @@ const createOrderSchema = z.object({
   amount: z
     .number()
     .int()
-    .positive("Amount must be a positive integer (in paise)"),
-  currency: z.string().length(3).default("INR"),
+    .positive("Amount must be a positive integer (in paise)")
+    .optional(),
+  currency: z.string().trim().length(3).default("INR"),
   plan: z.string().min(1, "Plan is required"),
+  billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
   durationDays: z.number().int().positive().optional(),
-});
+  description: z.string().max(300).optional(),
+}).strict();
 
 const verifyPaymentSchema = z.object({
   razorpay_payment_id: z.string().min(1),
   razorpay_order_id: z.string().min(1),
   razorpay_signature: z.string().min(1),
-});
+}).strict();
 
 const refundPaymentSchema = z.object({
   paymentId: z.string().min(1),
   amount: z.number().positive().optional(),
   reason: z.string().max(300).optional(),
-});
+}).strict();
 
 const recordPaymentSchema = z.object({
   studentId: z.string().min(1).optional(),
@@ -38,7 +46,7 @@ const recordPaymentSchema = z.object({
   method: z.enum(["card", "upi", "netbanking", "wallet"]),
   receiptId: z.string().min(1).optional(),
   status: z.enum(["Paid", "Pending", "Failed"]).default("Paid"),
-});
+}).strict();
 
 const preHandler = [
   authenticate,
@@ -58,15 +66,64 @@ export default async function paymentRoutes(server: FastifyInstance) {
         throw Errors.validation(result.error.flatten().fieldErrors);
       }
 
+      const normalizedPlan = normalizePlanCode(result.data.plan);
+      if (!normalizedPlan) {
+        throw Errors.badRequest(
+          "Unsupported plan. Allowed values: free, basic, pro, enterprise"
+        );
+      }
+
+      const serverAmount = resolveSubscriptionAmountPaise(
+        normalizedPlan,
+        result.data.billingCycle,
+        result.data.durationDays
+      );
+
+      if (serverAmount <= 0) {
+        throw Errors.badRequest(
+          "Selected plan does not require payment order creation"
+        );
+      }
+
+      if (
+        result.data.amount !== undefined &&
+        Math.trunc(result.data.amount) !== serverAmount
+      ) {
+        throw Errors.badRequest("Amount mismatch. Use backend-computed order amount.");
+      }
+
+      const idempotencyHeader = request.headers["idempotency-key"];
+      const idempotencyKey =
+        typeof idempotencyHeader === "string"
+          ? idempotencyHeader
+          : Array.isArray(idempotencyHeader)
+            ? idempotencyHeader[0]
+            : undefined;
+
       const order = await createOrder({
-        amount: result.data.amount,
+        amount: serverAmount,
         currency: result.data.currency,
         schoolId: request.schoolId,
-        plan: result.data.plan,
+        plan: normalizedPlan,
         durationDays: result.data.durationDays,
+        billingCycle: result.data.billingCycle,
+        idempotencyKey,
+        initiatedBy: request.user.uid,
+        description: result.data.description,
       });
 
-      return sendSuccess(request, reply, { order }, 201);
+      return sendSuccess(
+        request,
+        reply,
+        {
+          order,
+          id: order.id,
+          amount: order.amount,
+          currency: order.currency,
+          receipt: order.receipt,
+        },
+        201
+      );
     }
   );
 
@@ -80,18 +137,15 @@ export default async function paymentRoutes(server: FastifyInstance) {
         throw Errors.validation(parsed.error.flatten().fieldErrors);
       }
 
-      const existing = await prisma.invoice.findFirst({
-        where: {
-          schoolId: request.schoolId,
-          razorpayPaymentId: parsed.data.razorpay_payment_id,
-        },
-        select: { id: true },
+      const verification = await verifyPaymentAndPersist({
+        schoolId: request.schoolId,
+        razorpayOrderId: parsed.data.razorpay_order_id,
+        razorpayPaymentId: parsed.data.razorpay_payment_id,
+        razorpaySignature: parsed.data.razorpay_signature,
+        performedBy: request.user.uid,
       });
 
-      return sendSuccess(request, reply, {
-        verified: Boolean(existing),
-        paymentId: parsed.data.razorpay_payment_id,
-      });
+      return sendSuccess(request, reply, verification);
     }
   );
 
@@ -195,12 +249,19 @@ export default async function paymentRoutes(server: FastifyInstance) {
         },
       });
 
-      await writeAuditLog("PAYMENT_RECORDED", request.user.uid, request.schoolId, {
-        paymentId: payment.id,
-        amount: payment.amount,
-        method: payment.method,
-        status: payment.status,
-      });
+      try {
+        await writeAuditLog("PAYMENT_CREATED", request.user.uid, request.schoolId, {
+          paymentId: payment.id,
+          amount: payment.amount,
+          method: payment.method,
+          status: payment.status,
+        });
+      } catch (error) {
+        request.log.error(
+          { err: error, paymentId: payment.id, schoolId: request.schoolId },
+          "Failed to write PAYMENT_CREATED audit log"
+        );
+      }
 
       return sendSuccess(request, reply, payment, 201);
     }

@@ -100,8 +100,8 @@ export default function AddQuestionScreen() {
   };
 
   const uploadFile = async (file: { uri: string; name: string; type: string }): Promise<string> => {
-    const { fileUrl } = await uploadFileToServer(file.uri, file.name, file.type);
-    return fileUrl;
+    const { url } = await uploadFileToServer(file.uri, file.name, file.type);
+    return url;
   };
 
   const handleSave = async () => {

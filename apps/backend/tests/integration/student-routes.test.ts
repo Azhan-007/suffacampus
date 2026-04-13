@@ -14,6 +14,10 @@ import {
 } from "../__mocks__/firebase-admin";
 import { AppError } from "../../src/errors";
 
+jest.mock("../../src/services/session.service", () => ({
+  validateSessionAccessToken: jest.fn().mockResolvedValue(null),
+}));
+
 const mockState = {
   schools: new Map<string, any>(),
   students: new Map<string, any>(),
@@ -21,116 +25,141 @@ const mockState = {
   studentCounter: 1,
 };
 
-jest.mock("../../src/lib/prisma", () => ({
-  prisma: {
-    user: {
-      findUnique: jest.fn(async () => null),
-      upsert: jest.fn(async ({ where: { uid }, update, create }) => {
-        const existing = mockState.users.get(uid);
-        const user = existing ? { ...existing, ...update } : create;
-        mockState.users.set(uid, user);
-        return user;
-      }),
-      create: jest.fn(async ({ data }) => {
-        mockState.users.set(data.uid, data);
-        return data;
-      }),
-    },
-    school: {
-      findUnique: jest.fn(async ({ where: { id }, select }) => {
-        const school = mockState.schools.get(id) ?? null;
-        if (!school || !select) return school;
-        const selected: Record<string, unknown> = {};
-        for (const key of Object.keys(select)) {
-          if (select[key]) selected[key] = school[key];
-        }
-        return selected;
-      }),
-    },
-    class: {
-      findFirst: jest.fn(async ({ where }) => {
-        if (!where?.id || !where?.schoolId) return null;
-        return { id: where.id, schoolId: where.schoolId };
-      }),
-    },
-    student: {
-      create: jest.fn(async ({ data }) => {
-        const id = `stu_${mockState.studentCounter++}`;
-        const student = {
-          id,
-          isActive: true,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          ...data,
-        };
-        mockState.students.set(id, student);
-        return student;
-      }),
-      findMany: jest.fn(async ({ where, orderBy, take }) => {
-        let rows = [...mockState.students.values()].filter((s) => {
-          if (where?.schoolId && s.schoolId !== where.schoolId) return false;
-          if (typeof where?.isDeleted !== "undefined" && s.isDeleted !== where.isDeleted) return false;
-          if (where?.id) {
-            if (typeof where.id === "string" && s.id !== where.id) return false;
-            if (
-              typeof where.id === "object" &&
-              where.id !== null &&
-              Array.isArray(where.id.in) &&
-              !where.id.in.includes(s.id)
-            ) {
-              return false;
-            }
-          }
-          if (where?.classId && s.classId !== where.classId) return false;
-          if (where?.sectionId && s.sectionId !== where.sectionId) return false;
-          if (where?.gender && s.gender !== where.gender) return false;
-          if (typeof where?.isActive !== "undefined" && s.isActive !== where.isActive) return false;
-          if (where?.OR && Array.isArray(where.OR)) {
-            const search = String(where.OR[0]?.firstName?.contains ?? "").toLowerCase();
-            if (search) {
-              const fn = String(s.firstName ?? "").toLowerCase();
-              const ln = String(s.lastName ?? "").toLowerCase();
-              if (!fn.includes(search) && !ln.includes(search)) return false;
-            }
-          }
-          return true;
-        });
+jest.mock("../../src/lib/prisma", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getDoc } = require("../__mocks__/firebase-admin");
 
-        const sortBy = Object.keys(orderBy ?? {})[0] ?? "createdAt";
-        const sortOrder = (orderBy?.[sortBy] ?? "desc") as "asc" | "desc";
-        rows = rows.sort((a, b) => {
-          const lhs = a[sortBy];
-          const rhs = b[sortBy];
-          if (lhs === rhs) return 0;
-          if (sortOrder === "asc") return lhs > rhs ? 1 : -1;
-          return lhs < rhs ? 1 : -1;
-        });
+  return {
+    prisma: {
+      user: {
+        findUnique: jest.fn(
+          async ({ where: { uid } }: { where: { uid: string } }) => {
+            const doc = getDoc("users", uid) as Record<string, unknown> | undefined;
+            if (!doc) return null;
 
-        return typeof take === "number" ? rows.slice(0, take) : rows;
-      }),
-      findUnique: jest.fn(async ({ where: { id } }) => mockState.students.get(id) ?? null),
-      update: jest.fn(async ({ where: { id }, data }) => {
-        const existing = mockState.students.get(id);
-        if (!existing) throw new Error("Student not found");
-        const updated = { ...existing, ...data, updatedAt: new Date() };
-        mockState.students.set(id, updated);
-        return updated;
-      }),
-      delete: jest.fn(async ({ where: { id } }) => {
-        const existing = mockState.students.get(id);
-        mockState.students.delete(id);
-        return existing;
-      }),
-      count: jest.fn(async ({ where }) => {
-        return [...mockState.students.values()].filter((s) => {
-          if (where?.schoolId && s.schoolId !== where.schoolId) return false;
-          if (typeof where?.isDeleted !== "undefined" && s.isDeleted !== where.isDeleted) return false;
-          return true;
-        }).length;
-      }),
+            return {
+              uid,
+              email: (doc.email as string | undefined) ?? "",
+              role: (doc.role as string | undefined) ?? null,
+              schoolId: (doc.schoolId as string | undefined) ?? null,
+              isActive: (doc.isActive as boolean | undefined) ?? true,
+              displayName:
+                (doc.displayName as string | undefined) ??
+                (doc.name as string | undefined) ??
+                null,
+              studentId: (doc.studentId as string | undefined) ?? null,
+              studentIds: (doc.studentIds as string[] | undefined) ?? null,
+              teacherId: (doc.teacherId as string | undefined) ?? null,
+            };
+          }
+        ),
+        upsert: jest.fn(async ({ where: { uid }, update, create }) => {
+          const existing = mockState.users.get(uid);
+          const user = existing ? { ...existing, ...update } : create;
+          mockState.users.set(uid, user);
+          return user;
+        }),
+        create: jest.fn(async ({ data }) => {
+          mockState.users.set(data.uid, data);
+          return data;
+        }),
+      },
+      school: {
+        findUnique: jest.fn(async ({ where: { id }, select }) => {
+          const school = mockState.schools.get(id) ?? null;
+          if (!school || !select) return school;
+          const selected: Record<string, unknown> = {};
+          for (const key of Object.keys(select)) {
+            if (select[key]) selected[key] = school[key];
+          }
+          return selected;
+        }),
+      },
+      class: {
+        findFirst: jest.fn(async ({ where }) => {
+          if (!where?.id || !where?.schoolId) return null;
+          return { id: where.id, schoolId: where.schoolId };
+        }),
+      },
+      student: {
+        create: jest.fn(async ({ data }) => {
+          const id = `stu_${mockState.studentCounter++}`;
+          const student = {
+            id,
+            isActive: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            ...data,
+          };
+          mockState.students.set(id, student);
+          return student;
+        }),
+        findMany: jest.fn(async ({ where, orderBy, take }) => {
+          let rows = [...mockState.students.values()].filter((s) => {
+            if (where?.schoolId && s.schoolId !== where.schoolId) return false;
+            if (typeof where?.isDeleted !== "undefined" && s.isDeleted !== where.isDeleted) return false;
+            if (where?.id) {
+              if (typeof where.id === "string" && s.id !== where.id) return false;
+              if (
+                typeof where.id === "object" &&
+                where.id !== null &&
+                Array.isArray(where.id.in) &&
+                !where.id.in.includes(s.id)
+              ) {
+                return false;
+              }
+            }
+            if (where?.classId && s.classId !== where.classId) return false;
+            if (where?.sectionId && s.sectionId !== where.sectionId) return false;
+            if (where?.gender && s.gender !== where.gender) return false;
+            if (typeof where?.isActive !== "undefined" && s.isActive !== where.isActive) return false;
+            if (where?.OR && Array.isArray(where.OR)) {
+              const search = String(where.OR[0]?.firstName?.contains ?? "").toLowerCase();
+              if (search) {
+                const fn = String(s.firstName ?? "").toLowerCase();
+                const ln = String(s.lastName ?? "").toLowerCase();
+                if (!fn.includes(search) && !ln.includes(search)) return false;
+              }
+            }
+            return true;
+          });
+
+          const sortBy = Object.keys(orderBy ?? {})[0] ?? "createdAt";
+          const sortOrder = (orderBy?.[sortBy] ?? "desc") as "asc" | "desc";
+          rows = rows.sort((a, b) => {
+            const lhs = a[sortBy];
+            const rhs = b[sortBy];
+            if (lhs === rhs) return 0;
+            if (sortOrder === "asc") return lhs > rhs ? 1 : -1;
+            return lhs < rhs ? 1 : -1;
+          });
+
+          return typeof take === "number" ? rows.slice(0, take) : rows;
+        }),
+        findUnique: jest.fn(async ({ where: { id } }) => mockState.students.get(id) ?? null),
+        update: jest.fn(async ({ where: { id }, data }) => {
+          const existing = mockState.students.get(id);
+          if (!existing) throw new Error("Student not found");
+          const updated = { ...existing, ...data, updatedAt: new Date() };
+          mockState.students.set(id, updated);
+          return updated;
+        }),
+        delete: jest.fn(async ({ where: { id } }) => {
+          const existing = mockState.students.get(id);
+          mockState.students.delete(id);
+          return existing;
+        }),
+        count: jest.fn(async ({ where }) => {
+          return [...mockState.students.values()].filter((s) => {
+            if (where?.schoolId && s.schoolId !== where.schoolId) return false;
+            if (typeof where?.isDeleted !== "undefined" && s.isDeleted !== where.isDeleted) return false;
+            return true;
+          }).length;
+        }),
+      },
     },
-  },
-}));
+  };
+});
 
 // Mock audit service
 jest.mock("../../src/services/audit.service", () => ({
@@ -338,7 +367,8 @@ describe("POST /students", () => {
 
   it("returns 403 when subscription student limit reached", async () => {
     setupAuthUser();
-    seedSchool("school_1", { limits: { students: 0, maxStudents: 0, maxTeachers: 50, maxClasses: 20 } });
+    seedSchool("school_1", { limits: { students: 1, maxStudents: 1, maxTeachers: 50, maxClasses: 20 } });
+    seedStudent("stu_existing", "school_1");
 
     const res = await server.inject({
       method: "POST",
@@ -596,6 +626,23 @@ describe("PATCH /students/:id", () => {
 
     expect(res.statusCode).toBe(403);
   });
+
+  it("blocks update for student in different school (tenant isolation)", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedStudent("stu_other", "school_2");
+
+    const res = await server.inject({
+      method: "PATCH",
+      url: "/students/stu_other",
+      headers: { authorization: "Bearer token" },
+      payload: { firstName: "Nope" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe("TENANT_MISMATCH");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -648,5 +695,21 @@ describe("DELETE /students/:id", () => {
     });
 
     expect(res.statusCode).toBe(403);
+  });
+
+  it("blocks delete for student in different school (tenant isolation)", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedStudent("stu_other", "school_2");
+
+    const res = await server.inject({
+      method: "DELETE",
+      url: "/students/stu_other",
+      headers: { authorization: "Bearer token" },
+    });
+
+    expect(res.statusCode).toBe(404);
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe("RESOURCE_NOT_FOUND");
   });
 });

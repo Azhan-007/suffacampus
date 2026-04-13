@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import type { MarkAttendanceInput } from "../schemas/attendance.schema";
 import { writeAuditLog } from "./audit.service";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export class AttendanceError extends Error {
   constructor(
@@ -21,6 +22,8 @@ export async function markAttendance(
   markedBy: string,
   data: MarkAttendanceInput
 ) {
+  assertSchoolScope(schoolId);
+
   // 1. Validate student belongs to this school
   const student = await prisma.student.findUnique({
     where: { id: data.studentId },
@@ -104,6 +107,8 @@ export async function getAttendanceByDate(
   classId?: string,
   sectionId?: string
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId, date };
   if (classId) where.classId = classId;
   if (sectionId) where.sectionId = sectionId;
@@ -120,6 +125,8 @@ export async function updateAttendance(
   data: { status?: string; remarks?: string },
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.attendance.findUnique({ where: { id: attendanceId } });
 
   if (!existing) return null;
@@ -151,6 +158,8 @@ export async function deleteAttendance(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.attendance.findUnique({ where: { id: attendanceId } });
 
   if (!existing) return false;

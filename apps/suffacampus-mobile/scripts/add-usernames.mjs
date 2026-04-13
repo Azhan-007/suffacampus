@@ -1,15 +1,24 @@
 ﻿// Auto-add username fields to existing users
+import 'dotenv/config';
 import { initializeApp } from 'firebase/app';
 import { collection, doc, getDocs, getFirestore, updateDoc } from 'firebase/firestore';
 
-// Your Firebase config (from firebase.ts)
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value.trim();
+}
+
+// Firebase config loaded from environment variables.
 const firebaseConfig = {
-  apiKey: "AIzaSyDahs8w3bKv6j74j-Q-rHb95VzWxU9aBLM",
-  authDomain: "SuffaCampus-fa194.firebaseapp.com",
-  projectId: "SuffaCampus-fa194",
-  storageBucket: "SuffaCampus-fa194.firebasestorage.app",
-  messagingSenderId: "1038598740653",
-  appId: "1:1038598740653:web:e23df2c6f1bbef5f00e2ce"
+  apiKey: requireEnv('EXPO_PUBLIC_FIREBASE_API_KEY'),
+  authDomain: requireEnv('EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN'),
+  projectId: requireEnv('EXPO_PUBLIC_FIREBASE_PROJECT_ID'),
+  storageBucket: requireEnv('EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: requireEnv('EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: requireEnv('EXPO_PUBLIC_FIREBASE_APP_ID')
 };
 
 const app = initializeApp(firebaseConfig);
@@ -51,10 +60,6 @@ async function addUsernames() {
     }
     
     console.log(`\nðŸŽ‰ Done! Updated ${updated} users.`);
-    console.log('\nCredentials:');
-    console.log('- Username: admin / Password: password123');
-    console.log('- Username: teacher / Password: password123');
-    console.log('- Username: student / Password: password123');
     
   } catch (error) {
     console.error('âŒ Error:', error);

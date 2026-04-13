@@ -2,32 +2,57 @@ import crypto from "crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { authenticate } from "../../middleware/auth";
-import { tenantGuard } from "../../middleware/tenant";
-import { roleMiddleware } from "../../middleware/role";
+import { apiKeyOrUserAuth } from "../../middleware/apiKey";
+import {
+  analyticsRateLimitProfile,
+  webhooksRateLimitProfile,
+} from "../../plugins/rateLimit";
 import { sendSuccess } from "../../utils/response";
 import { Errors } from "../../errors";
 
-const adminChain = [authenticate, tenantGuard, roleMiddleware(["Admin", "SuperAdmin"])];
+const integrationsReadAccess = apiKeyOrUserAuth({
+  requiredPermission: "integrations:read",
+  allowedRoles: ["Admin", "SuperAdmin"],
+});
+
+const integrationsManageAccess = apiKeyOrUserAuth({
+  requiredPermission: "integrations:manage",
+  allowedRoles: ["Admin", "SuperAdmin"],
+});
+
+const analyticsReadAccess = apiKeyOrUserAuth({
+  requiredPermission: "analytics:read",
+  allowedRoles: ["Admin", "SuperAdmin"],
+});
+
+const webhooksReadAccess = apiKeyOrUserAuth({
+  requiredPermission: "webhooks:read",
+  allowedRoles: ["Admin", "SuperAdmin"],
+});
+
+const webhooksManageAccess = apiKeyOrUserAuth({
+  requiredPermission: "webhooks:manage",
+  allowedRoles: ["Admin", "SuperAdmin"],
+});
 
 const createApiKeySchema = z.object({
   name: z.string().min(2).max(120),
   permissions: z.array(z.string().min(1)).default([]),
   rateLimit: z.number().int().positive().max(10_000).optional(),
   expiresAt: z.string().datetime().optional(),
-});
+}).strict();
 
 const updateApiKeySchema = z.object({
   name: z.string().min(2).max(120).optional(),
   permissions: z.array(z.string().min(1)).optional(),
   rateLimit: z.number().int().positive().max(10_000).optional(),
   expiresAt: z.string().datetime().nullable().optional(),
-});
+}).strict();
 
 const createWebhookSchema = z.object({
   url: z.string().url(),
   events: z.array(z.string().min(1)).min(1),
-});
+}).strict();
 
 function hashApiKey(rawKey: string): string {
   return crypto.createHash("sha256").update(rawKey).digest("hex");
@@ -46,7 +71,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // GET /api-keys
   server.get(
     "/api-keys",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler: [integrationsReadAccess],
+    },
     async (request, reply) => {
       const keys = await prisma.apiKey.findMany({
         where: { schoolId: request.schoolId },
@@ -76,7 +104,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // POST /api-keys
   server.post(
     "/api-keys",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler: [integrationsManageAccess],
+    },
     async (request: FastifyRequest, reply) => {
       const parsed = createApiKeySchema.safeParse(request.body);
       if (!parsed.success) {
@@ -124,7 +155,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // PATCH /api-keys/:id
   server.patch<{ Params: { id: string } }>(
     "/api-keys/:id",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler: [integrationsManageAccess],
+    },
     async (request, reply) => {
       const parsed = updateApiKeySchema.safeParse(request.body);
       if (!parsed.success) {
@@ -176,7 +210,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // DELETE /api-keys/:id
   server.delete<{ Params: { id: string } }>(
     "/api-keys/:id",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler: [integrationsManageAccess],
+    },
     async (request, reply) => {
       const existing = await prisma.apiKey.findFirst({
         where: {
@@ -200,7 +237,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // GET /api-keys/usage
   server.get(
     "/api-keys/usage",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler: [analyticsReadAccess],
+    },
     async (request, reply) => {
       const now = new Date();
       const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -226,7 +266,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // GET /webhooks
   server.get(
     "/webhooks",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: webhooksRateLimitProfile },
+      preHandler: [webhooksReadAccess],
+    },
     async (request, reply) => {
       const webhooks = await prisma.webhookConfig.findMany({
         where: { schoolId: request.schoolId },
@@ -240,7 +283,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // POST /webhooks
   server.post(
     "/webhooks",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: webhooksRateLimitProfile },
+      preHandler: [webhooksManageAccess],
+    },
     async (request: FastifyRequest, reply) => {
       const parsed = createWebhookSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -263,7 +309,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // DELETE /webhooks/:id
   server.delete<{ Params: { id: string } }>(
     "/webhooks/:id",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: webhooksRateLimitProfile },
+      preHandler: [webhooksManageAccess],
+    },
     async (request, reply) => {
       const webhook = await prisma.webhookConfig.findFirst({
         where: {
@@ -283,7 +332,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // GET /webhooks/deliveries
   server.get<{ Querystring: { webhookId?: string; status?: string; limit?: string; offset?: string } }>(
     "/webhooks/deliveries",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: webhooksRateLimitProfile },
+      preHandler: [webhooksReadAccess],
+    },
     async (request, reply) => {
       const limit = Math.min(Math.max(parseInt(request.query.limit ?? "20", 10) || 20, 1), 200);
       const offset = Math.max(parseInt(request.query.offset ?? "0", 10) || 0, 0);
@@ -311,7 +363,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // GET /webhooks/deliveries/:deliveryId
   server.get<{ Params: { deliveryId: string } }>(
     "/webhooks/deliveries/:deliveryId",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: webhooksRateLimitProfile },
+      preHandler: [webhooksReadAccess],
+    },
     async (request, reply) => {
       const delivery = await prisma.webhookDelivery.findFirst({
         where: {
@@ -330,7 +385,10 @@ export default async function integrationsRoutes(server: FastifyInstance) {
   // POST /webhooks/deliveries/:deliveryId/retry
   server.post<{ Params: { deliveryId: string } }>(
     "/webhooks/deliveries/:deliveryId/retry",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: webhooksRateLimitProfile },
+      preHandler: [webhooksManageAccess],
+    },
     async (request, reply) => {
       const delivery = await prisma.webhookDelivery.findFirst({
         where: {

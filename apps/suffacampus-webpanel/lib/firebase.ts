@@ -25,10 +25,13 @@ const missingKeys = Object.entries(firebaseConfig)
   .map(([k]) => k);
 
 if (missingKeys.length > 0 && typeof window === 'undefined') {
-  // Only throw on server — on client the values are baked in at build time
-  console.error(
-    `Missing Firebase config values: ${missingKeys.join(', ')}.\nEnsure .env.local has the NEXT_PUBLIC_FIREBASE_* variables and restart the dev server.`,
-  );
+  const errorMessage = `Missing Firebase config values: ${missingKeys.join(', ')}.\nEnsure .env.local has the NEXT_PUBLIC_FIREBASE_* variables and restart the dev server.`;
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(errorMessage);
+  }
+
+  console.error(errorMessage);
 }
 
 // Initialize Firebase

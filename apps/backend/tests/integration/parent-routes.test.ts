@@ -44,6 +44,27 @@ jest.mock("../../src/lib/prisma", () => ({
         mockState.invites.set(id, row);
         return row;
       }),
+      findMany: jest.fn(async ({ where, orderBy, take }) => {
+        let rows = [...mockState.invites.values()].filter((invite) => {
+          if (where?.schoolId && invite.schoolId !== where.schoolId) return false;
+          if (typeof where?.isActive !== "undefined" && invite.isActive !== where.isActive) return false;
+          if (where?.studentId && invite.studentId !== where.studentId) return false;
+          return true;
+        });
+
+        const sortBy = Object.keys(orderBy ?? {})[0] ?? "createdAt";
+        const sortOrder = (orderBy?.[sortBy] ?? "desc") as "asc" | "desc";
+        rows = rows.sort((a, b) => {
+          const lhs = a[sortBy];
+          const rhs = b[sortBy];
+          if (lhs === rhs) return 0;
+          if (sortOrder === "asc") return lhs > rhs ? 1 : -1;
+          return lhs < rhs ? 1 : -1;
+        });
+
+        if (typeof take === "number") rows = rows.slice(0, take);
+        return rows;
+      }),
       findFirst: jest.fn(async ({ where }) => {
         return [...mockState.invites.values()].find((i) => i.code === where.code && i.isActive === where.isActive) ?? null;
       }),
@@ -190,6 +211,14 @@ describe("GET /parent/invites", () => {
     seedDoc("parentInvites", "inv1", {
       schoolId: "school_1", studentId: "stu_1", code: "ABC123",
       isActive: true, createdAt: { toMillis: () => Date.now() },
+    });
+    mockState.invites.set("inv1", {
+      id: "inv1",
+      schoolId: "school_1",
+      studentId: "stu_1",
+      code: "ABC123",
+      isActive: true,
+      createdAt: new Date(),
     });
     const res = await server.inject({
       method: "GET", url: "/parent/invites",

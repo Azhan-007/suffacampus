@@ -92,37 +92,45 @@ export default function SchoolsPage() {
   };
 
   const handleCreateSchool = async () => {
-    if (!formData.name || !formData.email || !formData.city) {
-      toast.error('Please fill in required fields');
+    const schoolName = formData.name.trim();
+    const schoolCity = formData.city.trim();
+    const adminEmail = formData.adminEmail.trim();
+    const schoolEmail = formData.email.trim() || adminEmail;
+
+    if (!schoolName || !schoolEmail || !schoolCity) {
+      toast.error('Please fill in required fields (Name, School/Admin Email, City)');
       return;
     }
     try {
       // Generate school code from name
-      const code = formData.name.substring(0, 3).toUpperCase() + String(Date.now()).slice(-4);
+      const code = schoolName.substring(0, 3).toUpperCase() + String(Date.now()).slice(-4);
+      const limits = PLAN_LIMITS[formData.subscriptionPlan];
+      const adminPassword = formData.adminPassword.trim();
+      const adminDisplayName = formData.adminDisplayName.trim();
       
       await SchoolService.createSchool({
-        name: formData.name,
+        name: schoolName,
         code: code,
-        address: formData.address || '',
-        city: formData.city,
-        state: formData.state || '',
-        pincode: formData.pincode || '',
-        phone: formData.phone || '',
-        email: formData.email,
+        address: formData.address.trim() || '',
+        city: schoolCity,
+        state: formData.state.trim() || '',
+        pincode: formData.pincode.trim() || '',
+        phone: formData.phone.trim() || '',
+        email: schoolEmail,
         website: normalizeOptionalUrl(formData.website),
-        principalName: formData.principalName || undefined,
-        adminEmail: formData.adminEmail || undefined,
-        adminPassword: formData.adminPassword || undefined,
-        adminDisplayName: formData.adminDisplayName || undefined,
+        principalName: formData.principalName.trim() || undefined,
+        adminEmail: adminEmail || undefined,
+        adminPassword: adminPassword || undefined,
+        adminDisplayName: adminDisplayName || undefined,
         primaryColor: '#4A90D9',
         secondaryColor: '#E6F4FE',
         subscriptionPlan: formData.subscriptionPlan,
         subscriptionStatus: formData.subscriptionStatus,
         subscriptionStartDate: new Date(),
         subscriptionEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        maxStudents: PLAN_LIMITS[formData.subscriptionPlan].maxStudents,
-        maxTeachers: PLAN_LIMITS[formData.subscriptionPlan].maxTeachers,
-        maxStorage: PLAN_LIMITS[formData.subscriptionPlan].maxStorage,
+        maxStudents: limits.maxStudents <= 0 ? 999999 : limits.maxStudents,
+        maxTeachers: limits.maxTeachers <= 0 ? 999999 : limits.maxTeachers,
+        maxStorage: limits.maxStorage <= 0 ? 999999 : limits.maxStorage,
         timezone: 'Asia/Kolkata',
         currency: 'INR',
         dateFormat: 'DD/MM/YYYY',

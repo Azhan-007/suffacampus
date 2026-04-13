@@ -23,6 +23,7 @@ export const CreateNotificationSchema = z
     referenceId: z.string().trim().min(1, "Reference id cannot be empty").optional(),
     referenceType: NotificationReferenceType.optional(),
   })
+  .strict()
   .superRefine((data, ctx) => {
     if ((data.targetType === "USER" || data.targetType === "ROLE") && !data.targetId) {
       ctx.addIssue({
@@ -51,7 +52,7 @@ export const CreateNotificationSchema = z
 
 export const MarkAsReadSchema = z.object({
   notificationId: z.string().trim().min(1, "Notification id is required"),
-});
+}).strict();
 
 export const UpdateNotificationPreferencesSchema = z.object({
   attendanceEnabled: z.boolean().optional(),
@@ -61,7 +62,7 @@ export const UpdateNotificationPreferencesSchema = z.object({
   inAppEnabled: z.boolean().optional(),
   pushEnabled: z.boolean().optional(),
   emailEnabled: z.boolean().optional(),
-});
+}).strict();
 
 export const createNotificationSchema = CreateNotificationSchema;
 export const markAsReadSchema = MarkAsReadSchema;

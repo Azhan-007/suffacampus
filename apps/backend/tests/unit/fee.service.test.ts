@@ -92,6 +92,7 @@ const validPayload = {
   sectionId: "A",
   amount: 5000,
   dueDate: "2025-04-30",
+  status: "Pending" as const,
   feeType: "Tuition",
 };
 
@@ -146,7 +147,7 @@ describe("createFee notifications", () => {
       targetId: "parent_1",
     });
     expect(payload.message).toEqual(expect.stringContaining("Fee of"));
-    expect(payload.message).toEqual(expect.stringContaining("5000"));
+    expect(payload.message).toEqual(expect.stringContaining("5,000.00"));
     expect(payload.message).toEqual(expect.stringContaining("John Doe"));
     expect(payload.referenceType).toBe("FEE");
     expect(payload.referenceId).toBe("fee_1");

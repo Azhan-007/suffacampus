@@ -7,6 +7,7 @@
 import pino from "pino";
 import { admin } from "../lib/firebase-admin";
 import { prisma } from "../lib/prisma";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 const log = pino({ name: "push-notification" });
 
@@ -41,6 +42,8 @@ export async function registerDeviceToken(params: {
   token: string;
   role?: string;
 }) {
+  assertSchoolScope(params.schoolId);
+
   const existing = await prisma.deviceToken.findFirst({
     where: {
       token: params.token,
@@ -103,6 +106,10 @@ export async function removeDeviceToken(params: {
   schoolId?: string;
   role?: string;
 }): Promise<boolean> {
+  if (params.schoolId !== undefined) {
+    assertSchoolScope(params.schoolId);
+  }
+
   const where = {
     token: params.token,
     ...(params.userId ? { userId: params.userId } : {}),
@@ -150,6 +157,8 @@ export async function getUserTokens(userId: string) {
 }
 
 export async function getSchoolTokens(schoolId: string) {
+  assertSchoolScope(schoolId);
+
   return prisma.deviceToken.findMany({ where: { schoolId } });
 }
 
@@ -167,6 +176,8 @@ export async function sendToUserInSchool(
   schoolId: string,
   payload: PushNotificationPayload
 ): Promise<SendResult> {
+  assertSchoolScope(schoolId);
+
   const tokens = await prisma.deviceToken.findMany({
     where: { userId, schoolId },
     select: { token: true },
@@ -181,6 +192,8 @@ export async function sendToRoleTopic(
   role: string,
   payload: PushNotificationPayload
 ): Promise<string> {
+  assertSchoolScope(schoolId);
+
   const message: admin.messaging.Message = {
     topic: `school_${schoolId}_role_${role}`,
     notification: { title: payload.title, body: payload.body, imageUrl: payload.imageUrl },
@@ -194,6 +207,8 @@ export async function sendToRoleTopic(
 }
 
 export async function sendToSchool(schoolId: string, payload: PushNotificationPayload): Promise<string> {
+  assertSchoolScope(schoolId);
+
   const message: admin.messaging.Message = {
     topic: `school_${schoolId}`,
     notification: { title: payload.title, body: payload.body, imageUrl: payload.imageUrl },

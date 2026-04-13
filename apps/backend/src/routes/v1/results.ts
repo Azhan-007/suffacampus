@@ -14,7 +14,7 @@ import { tenantGuard } from "../../middleware/tenant";
 import { roleMiddleware } from "../../middleware/role";
 import { sendSuccess, sendPaginated } from "../../utils/response";
 import { Errors } from "../../errors";
-import { firestore } from "../../lib/firebase-admin";
+import { prisma } from "../../lib/prisma";
 
 const preHandler = [authenticate, tenantGuard];
 
@@ -75,19 +75,57 @@ export default async function resultRoutes(server: FastifyInstance) {
       const { teacherId } = request.body as { teacherId?: string };
       if (!teacherId) throw Errors.badRequest("teacherId is required");
 
-      const snap = await firestore
-        .collection("results")
-        .where("schoolId", "==", request.schoolId)
-        .where("teacherId", "==", teacherId)
-        .where("published", "==", false)
-        .where("isDeleted", "==", false)
-        .get();
+      if (
+        request.user.role === "Teacher" &&
+        typeof request.user.teacherId === "string" &&
+        request.user.teacherId !== teacherId
+      ) {
+        throw Errors.insufficientRole(["Teacher can only publish own class results"]);
+      }
 
-      const batch = firestore.batch();
-      snap.docs.forEach((doc) => batch.update(doc.ref, { published: true, updatedAt: new Date().toISOString(), updatedBy: request.user.uid }));
-      await batch.commit();
+      const teacher = await prisma.teacher.findUnique({
+        where: { id: teacherId },
+        select: { schoolId: true, isDeleted: true },
+      });
 
-      return sendSuccess(request, reply, { updated: snap.size });
+      if (!teacher || teacher.isDeleted || teacher.schoolId !== request.schoolId) {
+        throw Errors.notFound("Teacher", teacherId);
+      }
+
+      const teacherScopes = await prisma.teacherClassAssignment.findMany({
+        where: {
+          teacherId,
+          teacher: {
+            schoolId: request.schoolId,
+            isDeleted: false,
+          },
+        },
+        select: {
+          classId: true,
+          sectionId: true,
+        },
+      });
+
+      if (teacherScopes.length === 0) {
+        return sendSuccess(request, reply, { updated: 0 });
+      }
+
+      const updated = await prisma.result.updateMany({
+        where: {
+          schoolId: request.schoolId,
+          published: false,
+          isActive: true,
+          OR: teacherScopes.map((scope) => ({
+            classId: scope.classId,
+            sectionId: scope.sectionId,
+          })),
+        },
+        data: {
+          published: true,
+        },
+      });
+
+      return sendSuccess(request, reply, { updated: updated.count });
     }
   );
 

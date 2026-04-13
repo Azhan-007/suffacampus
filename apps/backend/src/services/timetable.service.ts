@@ -2,12 +2,15 @@ import { prisma } from "../lib/prisma";
 import type { CreateTimetableInput, UpdateTimetableInput } from "../schemas/modules.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export async function createTimetable(
   schoolId: string,
   data: CreateTimetableInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const timetable = await prisma.timetable.create({
     data: {
       schoolId,
@@ -47,6 +50,8 @@ export async function getTimetablesBySchool(
   pagination: { limit?: number; cursor?: string; sortBy?: string; sortOrder?: "asc" | "desc" },
   filters: { classId?: string; sectionId?: string; day?: string } = {}
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId, isActive: true };
   if (filters.classId) where.classId = filters.classId;
   if (filters.sectionId) where.sectionId = filters.sectionId;
@@ -72,6 +77,8 @@ export async function getTimetablesBySchool(
 }
 
 export async function getTimetableById(timetableId: string, schoolId: string) {
+  assertSchoolScope(schoolId);
+
   const tt = await prisma.timetable.findUnique({
     where: { id: timetableId },
     include: { periods: { orderBy: { periodNumber: "asc" } } },
@@ -86,6 +93,8 @@ export async function getTimetableByClassDay(
   sectionId: string,
   day: string
 ) {
+  assertSchoolScope(schoolId);
+
   return prisma.timetable.findUnique({
     where: { schoolId_classId_sectionId_day: { schoolId, classId, sectionId, day } },
     include: { periods: { orderBy: { periodNumber: "asc" } } },
@@ -98,6 +107,8 @@ export async function updateTimetable(
   data: UpdateTimetableInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.timetable.findUnique({ where: { id: timetableId } });
   if (!existing) throw Errors.notFound("Timetable", timetableId);
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
@@ -107,7 +118,12 @@ export async function updateTimetable(
 
   // Replace periods if provided
   if (periods) {
-    await prisma.period.deleteMany({ where: { timetableId } });
+    await prisma.period.deleteMany({
+      where: {
+        timetableId,
+        timetable: { schoolId },
+      },
+    });
     await prisma.period.createMany({
       data: periods.map((p) => ({
         timetableId,
@@ -141,6 +157,8 @@ export async function softDeleteTimetable(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.timetable.findUnique({ where: { id: timetableId } });
   if (!existing || existing.schoolId !== schoolId || !existing.isActive) return false;
 

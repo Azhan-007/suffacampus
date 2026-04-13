@@ -105,6 +105,62 @@ jest.mock("../../src/lib/prisma", () => ({
         ...data,
       })),
     },
+    schoolConfig: {
+      create: jest.fn(async ({ data }) => ({
+        id: `cfg_${Date.now()}`,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...data,
+      })),
+    },
+    $transaction: jest.fn(async (arg: unknown) => {
+      if (typeof arg === "function") {
+        const tx = {
+          school: {
+            create: async ({ data }: { data: Record<string, unknown> }) => {
+              const id =
+                (data.id as string | undefined) ??
+                `school_${mockState.schoolCounter++}`;
+              const now = new Date();
+              const school = {
+                id,
+                currentStudents: 0,
+                currentTeachers: 0,
+                createdAt: now,
+                updatedAt: now,
+                ...data,
+              };
+              mockState.schools.set(id, school);
+              return school;
+            },
+          },
+          subscription: {
+            create: async ({ data }: { data: Record<string, unknown> }) => ({
+              id: `sub_${Date.now()}`,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+              ...data,
+            }),
+          },
+          schoolConfig: {
+            create: async ({ data }: { data: Record<string, unknown> }) => ({
+              id: `cfg_${Date.now()}`,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+              ...data,
+            }),
+          },
+        };
+
+        return (arg as (input: typeof tx) => Promise<unknown>)(tx);
+      }
+
+      if (Array.isArray(arg)) {
+        return Promise.all(arg as Array<Promise<unknown>>);
+      }
+
+      return arg;
+    }),
   },
 }));
 

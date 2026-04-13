@@ -2,12 +2,17 @@ import { prisma } from "../lib/prisma";
 import type { CreateClassInput, UpdateClassInput, SectionInput } from "../schemas/modules.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
+import { enforcePlanLimit } from "./plan-limit.service";
 
 export async function createClass(
   schoolId: string,
   data: CreateClassInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+  await enforcePlanLimit("classes", schoolId);
+
   const classRecord = await prisma.class.create({
     data: {
       schoolId,
@@ -42,6 +47,8 @@ export async function getClassesBySchool(
   schoolId: string,
   pagination: { limit?: number; cursor?: string }
 ) {
+  assertSchoolScope(schoolId);
+
   const limit = Math.min(pagination.limit ?? 50, 100);
 
   const classes = await prisma.class.findMany({
@@ -66,6 +73,8 @@ export async function getClassesBySchool(
 }
 
 export async function getAllClassesBySchool(schoolId: string) {
+  assertSchoolScope(schoolId);
+
   return prisma.class.findMany({
     where: { schoolId, isActive: true },
     include: { sections: true },
@@ -74,6 +83,8 @@ export async function getAllClassesBySchool(schoolId: string) {
 }
 
 export async function getClassById(classId: string, schoolId: string) {
+  assertSchoolScope(schoolId);
+
   const classRecord = await prisma.class.findUnique({
     where: { id: classId },
     include: { sections: true },
@@ -92,6 +103,8 @@ export async function updateClass(
   data: UpdateClassInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.class.findUnique({ where: { id: classId } });
 
   if (!existing) throw Errors.notFound("Class", classId);
@@ -121,6 +134,8 @@ export async function softDeleteClass(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.class.findUnique({ where: { id: classId } });
 
   if (!existing) return false;
@@ -146,6 +161,8 @@ export async function addSection(
   section: SectionInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.class.findUnique({ where: { id: classId } });
 
   if (!existing) throw Errors.notFound("Class", classId);
@@ -180,16 +197,30 @@ export async function removeSection(
   schoolId: string,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.class.findUnique({ where: { id: classId } });
 
   if (!existing) throw Errors.notFound("Class", classId);
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
   if (!existing.isActive) throw Errors.notFound("Class", classId);
 
-  const section = await prisma.section.findUnique({ where: { id: sectionId } });
-  if (!section || section.classId !== classId) throw Errors.notFound("Section", sectionId);
+  const section = await prisma.section.findFirst({
+    where: {
+      id: sectionId,
+      classId,
+      class: { schoolId },
+    },
+  });
+  if (!section) throw Errors.notFound("Section", sectionId);
 
-  await prisma.section.delete({ where: { id: sectionId } });
+  await prisma.section.deleteMany({
+    where: {
+      id: sectionId,
+      classId,
+      class: { schoolId },
+    },
+  });
 
   await writeAuditLog("REMOVE_SECTION", performedBy, schoolId, {
     classId,

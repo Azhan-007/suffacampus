@@ -1,5 +1,8 @@
 import { apiFetch } from '@/lib/api';
 import { auth } from '@/lib/firebase';
+import { PUBLIC_API_URL } from '@/lib/runtime-config';
+import { getSessionAccessToken } from '@/lib/session-token';
+import { useAuthStore } from '@/store/authStore';
 import { SchoolSettings } from '@/types';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -71,6 +74,10 @@ export class SettingsService {
   ): () => void {
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
+    let firebaseSignedIn = Boolean(auth.currentUser);
+
+    const isSessionReady = () =>
+      firebaseSignedIn && Boolean(useAuthStore.getState().user);
 
     const stopPolling = () => {
       if (intervalId !== null) {
@@ -81,6 +88,13 @@ export class SettingsService {
 
     const poll = async () => {
       if (cancelled) return;
+
+      if (!isSessionReady()) {
+        stopPolling();
+        callback(SettingsService.getDefaultSettings());
+        return;
+      }
+
       try {
         const settings = await SettingsService.getSettings();
         if (!cancelled) callback(settings);
@@ -91,28 +105,52 @@ export class SettingsService {
     };
 
     const startPolling = () => {
-      stopPolling();
-      void poll();
-      intervalId = setInterval(poll, 30_000);
-    };
-
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (cancelled) return;
-
-      // /settings is a protected endpoint; do not call it when signed out.
-      if (!user) {
+      if (cancelled || !isSessionReady()) {
         stopPolling();
         callback(SettingsService.getDefaultSettings());
         return;
       }
 
-      startPolling();
+      if (intervalId !== null) {
+        return;
+      }
+
+      stopPolling();
+      void poll();
+      intervalId = setInterval(poll, 30_000);
+    };
+
+    const syncPollingState = () => {
+      if (cancelled) return;
+      if (isSessionReady()) {
+        startPolling();
+        return;
+      }
+
+      stopPolling();
+      callback(SettingsService.getDefaultSettings());
+    };
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (cancelled) return;
+
+      firebaseSignedIn = Boolean(user);
+      syncPollingState();
     });
+
+    const unsubscribeStore = useAuthStore.subscribe((state, prevState) => {
+      if (state.user !== prevState.user) {
+        syncPollingState();
+      }
+    });
+
+    syncPollingState();
 
     return () => {
       cancelled = true;
       stopPolling();
       unsubscribeAuth();
+      unsubscribeStore();
     };
   }
 
@@ -153,15 +191,12 @@ export class SettingsService {
    * Upload school logo — backend: POST /uploads/photos (multipart)
    */
   static async uploadLogo(file: File): Promise<string> {
-    const token = (await import('@/lib/firebase')).auth.currentUser
-      ? await (await import('@/lib/firebase')).auth.currentUser!.getIdToken()
-      : null;
+    const token = getSessionAccessToken();
 
     const formData = new FormData();
     formData.append('file', file);
 
-    const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? (process.env.NODE_ENV === 'development' ? 'http://localhost:5000/api/v1' : (() => { throw new Error('NEXT_PUBLIC_API_URL is not set'); })());
-    const res = await fetch(`${BASE_URL}/uploads/photos`, {
+    const res = await fetch(`${PUBLIC_API_URL}/uploads/photos`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
@@ -172,8 +207,21 @@ export class SettingsService {
       throw new Error((body as any)?.error?.message ?? 'Logo upload failed');
     }
 
-    const data = await res.json();
-    return (data as any).data?.url ?? (data as any).url ?? '';
+    const data = (await res.json()) as {
+      url?: string;
+      fileUrl?: string;
+      data?: {
+        url?: string;
+        fileUrl?: string;
+      };
+    };
+
+    const url = data.url ?? data.data?.url ?? data.fileUrl ?? data.data?.fileUrl;
+    if (!url) {
+      throw new Error('Logo upload succeeded but no URL was returned');
+    }
+
+    return url;
   }
 
   /** Get available academic sessions */

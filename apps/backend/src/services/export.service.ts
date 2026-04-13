@@ -3,6 +3,8 @@
  */
 
 import { prisma } from "../lib/prisma";
+import { dateOnlyStringFrom, moneyToNumber } from "../utils/safe-fields";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export interface ExportColumn {
   header: string;
@@ -43,9 +45,18 @@ const TEACHER_COLUMNS: ExportColumn[] = [
 const FEE_COLUMNS: ExportColumn[] = [
   { header: "Student Name", accessor: "studentName" },
   { header: "Fee Type", accessor: "feeType" },
-  { header: "Amount", accessor: (row) => String(row.amount ?? 0) },
-  { header: "Paid Amount", accessor: (row) => String(row.amountPaid ?? 0) },
-  { header: "Due Date", accessor: "dueDate" },
+  {
+    header: "Amount",
+    accessor: (row) => String(moneyToNumber(row.amount as any)),
+  },
+  {
+    header: "Paid Amount",
+    accessor: (row) => String(moneyToNumber(row.amountPaid as any)),
+  },
+  {
+    header: "Due Date",
+    accessor: (row) => dateOnlyStringFrom(row.dueDate as any),
+  },
   { header: "Status", accessor: "status" },
   { header: "Payment Mode", accessor: "paymentMode" },
 ];
@@ -102,6 +113,8 @@ function rowToCsv(data: Record<string, unknown>, columns: ExportColumn[]): strin
  */
 export async function exportToCsv(options: ExportOptions): Promise<string> {
   const { entity, schoolId, columns, filters, limit } = options;
+  assertSchoolScope(schoolId);
+
   let records: Record<string, unknown>[];
 
   const where: any = { schoolId, ...filters };
@@ -139,6 +152,8 @@ export async function exportByTemplate(
   filters?: Record<string, unknown>,
   limit?: number
 ): Promise<string> {
+  assertSchoolScope(schoolId);
+
   const columns = EXPORT_TEMPLATES[template];
   if (!columns) throw new Error(`Unknown export template: ${template}`);
 

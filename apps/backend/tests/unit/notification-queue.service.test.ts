@@ -234,16 +234,30 @@ describe("notification queue service", () => {
     expect(options.jobId).toBe("notif_1");
   });
 
-  it("skips enqueue when redis is not configured", async () => {
+  it("processes notification inline when redis is not configured", async () => {
     delete process.env.REDIS_URL;
 
     const jobId = await enqueueNotificationJob(sampleJob);
 
     expect(jobId).toBe("notif_1");
     expect(mockQueueAdd).not.toHaveBeenCalled();
+    expect(sendToUserInSchool).toHaveBeenCalledWith(
+      "user_1",
+      "school_1",
+      expect.objectContaining({
+        title: "Hello",
+        body: "World",
+      })
+    );
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "user_1@example.com",
+        subject: "Hello",
+      })
+    );
     expect(logMock.warn).toHaveBeenCalledWith(
       expect.objectContaining({ notificationId: "notif_1" }),
-      "REDIS_URL not set - notification job not enqueued"
+      "REDIS_URL not set - processing notification inline"
     );
   });
 

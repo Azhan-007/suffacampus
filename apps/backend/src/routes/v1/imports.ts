@@ -15,7 +15,7 @@ const importBodySchema = z.object({
   rows: z.array(z.record(z.string(), z.unknown())).optional(),
   /** If true, skip invalid rows instead of aborting */
   skipInvalid: z.boolean().optional().default(true),
-});
+}).strict();
 
 export default async function importRoutes(server: FastifyInstance) {
   const adminChain = [

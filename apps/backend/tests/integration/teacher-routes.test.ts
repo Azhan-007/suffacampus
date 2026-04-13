@@ -36,7 +36,31 @@ jest.mock("../../src/lib/prisma", () => ({
         return data;
       }),
     },
+    school: {
+      findUnique: jest.fn(async ({ where: { id }, select }) => {
+        if (!id) return null;
+        const school = {
+          id,
+          subscriptionPlan: "free",
+          maxStudents: 200,
+          maxTeachers: 20,
+        };
+        if (!select) return school;
+        const selected: Record<string, unknown> = {};
+        for (const key of Object.keys(select)) {
+          if (select[key]) selected[key] = school[key as keyof typeof school];
+        }
+        return selected;
+      }),
+    },
     teacher: {
+      count: jest.fn(async ({ where }) =>
+        [...mockState.teachers.values()].filter((t) => {
+          if (where?.schoolId && t.schoolId !== where.schoolId) return false;
+          if (typeof where?.isDeleted !== "undefined" && t.isDeleted !== where.isDeleted) return false;
+          return true;
+        }).length
+      ),
       create: jest.fn(async ({ data, include }) => {
         const id = `teach_${mockState.teacherCounter++}`;
         const teacher = {

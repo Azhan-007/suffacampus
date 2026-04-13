@@ -44,10 +44,31 @@ function buildNotificationKey(input: {
 
 jest.mock("../../src/lib/prisma", () => ({
   prisma: {
+    school: {
+      findMany: jest.fn(async ({ where, select }) => {
+        const schoolIds = new Set(
+          [...mockState.fees.values()].map((fee) => fee.schoolId)
+        );
+
+        const rows = [...schoolIds].map((id) => ({ id, isActive: true }));
+        const filtered = where?.isActive === true ? rows.filter((row) => row.isActive) : rows;
+
+        if (!select) return filtered;
+        return select?.id ? filtered.map((row) => ({ id: row.id })) : filtered;
+      }),
+    },
     fee: {
       findMany: jest.fn(async ({ where, select }) => {
         const rows = [...mockState.fees.values()].filter((fee) => {
-          if (where?.dueDate?.lt && fee.dueDate >= where.dueDate.lt) return false;
+          if (where?.schoolId && fee.schoolId !== where.schoolId) return false;
+          if (where?.dueDate?.lt) {
+            const dueDate = new Date(fee.dueDate);
+            const ltDate =
+              where.dueDate.lt instanceof Date
+                ? where.dueDate.lt
+                : new Date(where.dueDate.lt);
+            if (dueDate >= ltDate) return false;
+          }
           if (where?.status?.in && !where.status.in.includes(fee.status)) return false;
           return true;
         });

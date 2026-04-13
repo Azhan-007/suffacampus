@@ -1,5 +1,4 @@
 import type { FastifyInstance } from "fastify";
-import { firestore } from "../lib/firebase-admin";
 import { prisma } from "../lib/prisma";
 import { getRealtimeBridgeStatus } from "../lib/realtime";
 import { getSearchBackendStatus } from "../services/search.service";
@@ -14,27 +13,6 @@ const BUILD_INFO = {
   commitSha: process.env.COMMIT_SHA ?? "unknown",
   environment: process.env.NODE_ENV ?? "development",
 };
-
-/**
- * Check Firestore connectivity by performing a lightweight read.
- */
-async function checkFirestore(): Promise<{
-  status: "healthy" | "degraded" | "unhealthy";
-  latencyMs: number;
-  error?: string;
-}> {
-  const start = Date.now();
-  try {
-    await firestore.collection("_health").doc("ping").get();
-    return { status: "healthy", latencyMs: Date.now() - start };
-  } catch (err) {
-    return {
-      status: "unhealthy",
-      latencyMs: Date.now() - start,
-      error: err instanceof Error ? err.message : "Unknown error",
-    };
-  }
-}
 
 async function checkPostgres(): Promise<{
   status: "healthy" | "degraded" | "unhealthy";
@@ -113,8 +91,7 @@ export async function healthRoutes(server: FastifyInstance) {
 
   // Deep readiness check — validates all dependencies
   server.get("/health/ready", async (_request, reply) => {
-    const [firestoreCheck, postgresCheck, searchStatus, webhookRetryQueue, emailQueue] = await Promise.all([
-      checkFirestore(),
+    const [postgresCheck, searchStatus, webhookRetryQueue, emailQueue] = await Promise.all([
       checkPostgres(),
       getSearchBackendStatus(),
       getWebhookRetryQueueStats(),
@@ -139,7 +116,6 @@ export async function healthRoutes(server: FastifyInstance) {
 
     const dependencies = {
       postgres: postgresCheck,
-      firestore: firestoreCheck,
       razorpay: razorpayCheck,
       redis: redisCheck,
       search: searchStatus,
@@ -172,21 +148,4 @@ export async function healthRoutes(server: FastifyInstance) {
     });
   });
 
-  // Cache stats endpoint (for monitoring / debugging)
-  server.get("/health/cache", async (_request, reply) => {
-    const stats = server.cache?.stats() ?? { hits: 0, misses: 0, keys: 0, ksize: 0, vsize: 0 };
-    const hitRate =
-      stats.hits + stats.misses > 0
-        ? ((stats.hits / (stats.hits + stats.misses)) * 100).toFixed(1)
-        : "0.0";
-
-    return reply.status(200).send({
-      success: true,
-      cache: {
-        ...stats,
-        hitRatePercent: parseFloat(hitRate),
-      },
-      timestamp: new Date().toISOString(),
-    });
-  });
 }

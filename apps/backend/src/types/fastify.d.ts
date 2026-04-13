@@ -24,6 +24,8 @@ declare module "fastify" {
     startTime: bigint;
     /** API key name (set by apiKey middleware) */
     apiKeyName?: string;
+    /** API key id (set by apiKey middleware) */
+    apiKeyId?: string;
     /** Multipart file accessor (provided by @fastify/multipart) */
     file: () => Promise<{
       filename: string;
@@ -31,6 +33,17 @@ declare module "fastify" {
       file: NodeJS.ReadableStream;
       toBuffer: () => Promise<Buffer>;
     } | undefined>;
+    /** Active backend session context when authenticated via JWT session token */
+    session?: {
+      id: string;
+      jti: string;
+      source: "session-jwt" | "firebase";
+      device?: string;
+      ipAddress?: string | null;
+      userAgent?: string | null;
+      lastActiveAt?: string;
+      expiresAt?: string;
+    };
   }
 
   interface FastifyInstance {

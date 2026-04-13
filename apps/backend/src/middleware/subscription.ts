@@ -2,6 +2,11 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import { prisma } from "../lib/prisma";
 import { Errors } from "../errors";
 import type { CacheService } from "../plugins/cache";
+import {
+  assertSchoolScope,
+  resolveStudentLimitForPlan,
+  resolveTeacherLimitForPlan,
+} from "../lib/tenant-scope";
 
 interface SchoolSubscription {
   subscriptionPlan: string;
@@ -32,6 +37,7 @@ export async function enforceSubscription(
   reply: FastifyReply
 ): Promise<void> {
   const { schoolId } = request;
+  assertSchoolScope(schoolId);
 
   // 1. Fetch school (with cache)
   const cache: CacheService | undefined = request.server.cache;
@@ -81,8 +87,14 @@ export async function enforceSubscription(
   }
 
   const limitByResource: Record<LimitedResource, number> = {
-    students: school.maxStudents ?? 0,
-    teachers: school.maxTeachers ?? 0,
+    students: resolveStudentLimitForPlan(
+      school.subscriptionPlan,
+      school.maxStudents
+    ),
+    teachers: resolveTeacherLimitForPlan(
+      school.subscriptionPlan,
+      school.maxTeachers
+    ),
     storage: school.maxStorage ?? 0,
   };
 

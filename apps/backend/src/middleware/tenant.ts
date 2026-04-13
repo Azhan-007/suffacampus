@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { Errors } from "../errors";
+import { setTenantContext } from "../lib/tenant-context";
 
 // Augment Fastify request to carry the tenant school ID
 declare module "fastify" {
@@ -53,5 +54,6 @@ export async function tenantGuard(
   }
 
   request.schoolId = schoolId;
+  setTenantContext({ enforceTenant: true, schoolId });
   request.log.info({ uid: user.uid, schoolId }, "Tenant context set");
 }

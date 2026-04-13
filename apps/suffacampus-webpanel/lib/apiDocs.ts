@@ -1,11 +1,12 @@
 ﻿import { ApiEndpointDoc } from '@/types';
+import { PUBLIC_API_URL } from '@/lib/runtime-config';
 
 // =============================================================================
 // SuffaCampus REST API Documentation
 // Complete reference for all public API endpoints
 // =============================================================================
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? (process.env.NODE_ENV === 'development' ? 'http://localhost:5000/api/v1' : '');
+export const API_BASE_URL = PUBLIC_API_URL;
 
 export const API_VERSION = 'v1';
 

@@ -1,5 +1,7 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export type NotificationPreferenceContext = {
   userId: string;
@@ -29,33 +31,95 @@ const UPDATE_FIELDS: Array<keyof UpdateNotificationPreferenceInput> = [
   "emailEnabled",
 ];
 
+type NotificationPreferenceRecord = {
+  id: string;
+  userId: string;
+  schoolId: string;
+  attendanceEnabled: boolean;
+  feesEnabled: boolean;
+  resultsEnabled: boolean;
+  generalEnabled: boolean;
+  inAppEnabled: boolean;
+  pushEnabled: boolean;
+  emailEnabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+const DEFAULT_PREFERENCE_FLAGS = {
+  attendanceEnabled: true,
+  feesEnabled: true,
+  resultsEnabled: true,
+  generalEnabled: true,
+  inAppEnabled: true,
+  pushEnabled: true,
+  emailEnabled: false,
+} as const;
+
+function buildDefaultPreferences(
+  context: NotificationPreferenceContext,
+  overrides: Partial<UpdateNotificationPreferenceInput> = {}
+): NotificationPreferenceRecord {
+  const now = new Date();
+
+  return {
+    id: `fallback-${context.userId}-${context.schoolId}`,
+    userId: context.userId,
+    schoolId: context.schoolId,
+    ...DEFAULT_PREFERENCE_FLAGS,
+    ...overrides,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function isMissingPreferenceTableError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  return error.code === "P2021" || error.code === "P2022";
+}
+
 export class NotificationPreferenceService {
   static async getPreferences(context: NotificationPreferenceContext) {
-    let preferences = await prisma.notificationPreference.findUnique({
-      where: {
-        userId_schoolId: {
-          userId: context.userId,
-          schoolId: context.schoolId,
-        },
-      },
-    });
+    assertSchoolScope(context.schoolId);
 
-    if (!preferences) {
-      preferences = await prisma.notificationPreference.create({
-        data: {
-          userId: context.userId,
-          schoolId: context.schoolId,
+    try {
+      let preferences = await prisma.notificationPreference.findUnique({
+        where: {
+          userId_schoolId: {
+            userId: context.userId,
+            schoolId: context.schoolId,
+          },
         },
       });
-    }
 
-    return preferences;
+      if (!preferences) {
+        preferences = await prisma.notificationPreference.create({
+          data: {
+            userId: context.userId,
+            schoolId: context.schoolId,
+          },
+        });
+      }
+
+      return preferences;
+    } catch (error) {
+      if (isMissingPreferenceTableError(error)) {
+        return buildDefaultPreferences(context);
+      }
+
+      throw error;
+    }
   }
 
   static async updatePreferences(
     input: UpdateNotificationPreferenceInput,
     context: NotificationPreferenceContext
   ) {
+    assertSchoolScope(context.schoolId);
+
     const data: UpdateNotificationPreferenceInput = {};
 
     for (const key of UPDATE_FIELDS) {
@@ -69,20 +133,28 @@ export class NotificationPreferenceService {
       throw Errors.badRequest("No fields to update");
     }
 
-    return prisma.notificationPreference.upsert({
-      where: {
-        userId_schoolId: {
+    try {
+      return await prisma.notificationPreference.upsert({
+        where: {
+          userId_schoolId: {
+            userId: context.userId,
+            schoolId: context.schoolId,
+          },
+        },
+        create: {
           userId: context.userId,
           schoolId: context.schoolId,
+          ...data,
         },
-      },
-      create: {
-        userId: context.userId,
-        schoolId: context.schoolId,
-        ...data,
-      },
-      update: data,
-    });
+        update: data,
+      });
+    } catch (error) {
+      if (isMissingPreferenceTableError(error)) {
+        return buildDefaultPreferences(context, data);
+      }
+
+      throw error;
+    }
   }
 
   static async shouldSendNotification(
@@ -91,23 +163,46 @@ export class NotificationPreferenceService {
     type: NotificationPreferenceType,
     channel: NotificationChannelType = "inApp"
   ): Promise<boolean> {
-    const preferences = await prisma.notificationPreference.findUnique({
-      where: {
-        userId_schoolId: {
-          userId,
-          schoolId,
+    assertSchoolScope(schoolId);
+
+    let preferences:
+      | {
+          attendanceEnabled: boolean;
+          feesEnabled: boolean;
+          resultsEnabled: boolean;
+          generalEnabled: boolean;
+          inAppEnabled: boolean;
+          pushEnabled: boolean;
+          emailEnabled: boolean;
+        }
+      | null = null;
+
+    try {
+      preferences = await prisma.notificationPreference.findUnique({
+        where: {
+          userId_schoolId: {
+            userId,
+            schoolId,
+          },
         },
-      },
-      select: {
-        attendanceEnabled: true,
-        feesEnabled: true,
-        resultsEnabled: true,
-        generalEnabled: true,
-        inAppEnabled: true,
-        pushEnabled: true,
-        emailEnabled: true,
-      },
-    });
+        select: {
+          attendanceEnabled: true,
+          feesEnabled: true,
+          resultsEnabled: true,
+          generalEnabled: true,
+          inAppEnabled: true,
+          pushEnabled: true,
+          emailEnabled: true,
+        },
+      });
+    } catch (error) {
+      if (isMissingPreferenceTableError(error)) {
+        if (channel === "email") return false;
+        return true;
+      }
+
+      throw error;
+    }
 
     if (!preferences) {
       if (channel === "email") return false;

@@ -5,6 +5,7 @@
 
 import type { Activity, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { Errors } from "../errors";
 import {
   BaseRepository,
   type PaginationParams,
@@ -36,10 +37,24 @@ export class ActivityRepository extends BaseRepository<Activity> {
     delete (data as any).id;
     delete (data as any).schoolId;
 
-    return prisma.activity.update({
-      where: { id },
+    const result = await prisma.activity.updateMany({
+      where: { id, schoolId },
       data: data as any,
     });
+
+    if (result.count === 0) {
+      throw Errors.notFound("Activity", id);
+    }
+
+    const updated = await prisma.activity.findFirst({
+      where: { id, schoolId },
+    });
+
+    if (!updated) {
+      throw Errors.notFound("Activity", id);
+    }
+
+    return updated;
   }
 
   /**
@@ -127,10 +142,14 @@ export class ActivityRepository extends BaseRepository<Activity> {
    * Soft delete activity
    */
   async softDelete(schoolId: string, id: string): Promise<void> {
-    await prisma.activity.update({
-      where: { id },
+    const result = await prisma.activity.updateMany({
+      where: { id, schoolId },
       data: { isDeleted: true },
     });
+
+    if (result.count === 0) {
+      throw Errors.notFound("Activity", id);
+    }
   }
 
   /**

@@ -15,6 +15,10 @@ import {
 import { AppError } from "../../src/errors";
 import { createNotification } from "../../src/services/notification.service";
 
+jest.mock("../../src/services/session.service", () => ({
+  validateSessionAccessToken: jest.fn().mockResolvedValue(null),
+}));
+
 const mockState = {
   fees: new Map<string, any>(),
   feeCounter: 1,
@@ -29,6 +33,9 @@ const mockState = {
 };
 
 jest.mock("../../src/lib/prisma", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getDoc } = require("../__mocks__/firebase-admin");
+
   const paymentCreate = jest.fn(async ({ data }) => {
     const id = `pay_${mockState.paymentCounter++}`;
     const payment = { id, ...data };
@@ -54,7 +61,25 @@ jest.mock("../../src/lib/prisma", () => {
   return {
     prisma: {
       user: {
-        findUnique: jest.fn(async () => null),
+        findUnique: jest.fn(async ({ where: { uid } }: { where: { uid: string } }) => {
+          const doc = getDoc("users", uid) as Record<string, unknown> | undefined;
+          if (!doc) return null;
+
+          return {
+            uid,
+            email: (doc.email as string | undefined) ?? "",
+            role: (doc.role as string | undefined) ?? null,
+            schoolId: (doc.schoolId as string | undefined) ?? null,
+            isActive: (doc.isActive as boolean | undefined) ?? true,
+            displayName:
+              (doc.displayName as string | undefined) ??
+              (doc.name as string | undefined) ??
+              null,
+            studentId: (doc.studentId as string | undefined) ?? null,
+            studentIds: (doc.studentIds as string[] | undefined) ?? null,
+            teacherId: (doc.teacherId as string | undefined) ?? null,
+          };
+        }),
         findMany: jest.fn(async ({ where, select }) => {
           const parents = [...mockState.users.values()].filter((user) => {
             if (where?.role && user.role !== where.role) return false;
@@ -436,7 +461,7 @@ describe("POST /fees", () => {
     const body = JSON.parse(res.body);
     expect(body.success).toBe(true);
     expect(body.data).toHaveProperty("id");
-    expect(body.data.amount).toBe(5000);
+    expect(Number(body.data.amount)).toBe(5000);
     expect(body.data.feeType).toBe("Tuition");
     expect(body.data.status).toBe("Pending");
   });

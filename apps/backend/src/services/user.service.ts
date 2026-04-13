@@ -3,12 +3,30 @@ import { admin, auth } from "../lib/firebase-admin";
 import type { CreateUserInput, UpdateUserInput } from "../schemas/admin.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
+
+const SUPERADMIN_ROLE = "SuperAdmin";
+
+function assertNotSuperAdminRole(role?: string): void {
+  if (role === SUPERADMIN_ROLE) {
+    throw Errors.badRequest("SuperAdmin role cannot be managed from school-scoped endpoints");
+  }
+}
+
+function assertUserNotSuperAdmin(existingRole: string): void {
+  if (existingRole === SUPERADMIN_ROLE) {
+    throw Errors.badRequest("SuperAdmin users cannot be managed from school-scoped endpoints");
+  }
+}
 
 export async function createUser(
   schoolId: string,
   data: CreateUserInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+  assertNotSuperAdminRole(data.role);
+
   // 1. Create Firebase Auth user
   let firebaseUser: admin.auth.UserRecord;
   try {
@@ -58,6 +76,8 @@ export async function getUsersBySchool(
   pagination: { limit?: number; cursor?: string },
   filters: { role?: string; status?: string } = {}
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId };
   if (filters.role) where.role = filters.role;
   if (filters.status) where.isActive = filters.status === "active";
@@ -81,9 +101,11 @@ export async function getUsersBySchool(
 }
 
 export async function getUserById(uid: string, schoolId: string) {
-  const user = await prisma.user.findUnique({ where: { uid } });
-  if (!user || user.schoolId !== schoolId) return null;
-  return user;
+  assertSchoolScope(schoolId);
+
+  return prisma.user.findFirst({
+    where: { uid, schoolId },
+  });
 }
 
 export async function updateUser(
@@ -92,9 +114,12 @@ export async function updateUser(
   data: UpdateUserInput,
   performedBy: string
 ) {
-  const existing = await prisma.user.findUnique({ where: { uid } });
+  assertSchoolScope(schoolId);
+  assertNotSuperAdminRole(data.role);
+
+  const existing = await prisma.user.findFirst({ where: { uid, schoolId } });
   if (!existing) throw Errors.notFound("User", uid);
-  if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
+  assertUserNotSuperAdmin(existing.role);
 
   // Update Firebase Auth if relevant fields changed
   const authUpdates: admin.auth.UpdateRequest = {};
@@ -112,10 +137,19 @@ export async function updateUser(
     await auth.setCustomUserClaims(uid, { role: data.role, schoolId });
   }
 
-  const updated = await prisma.user.update({
-    where: { uid },
+  const result = await prisma.user.updateMany({
+    where: { uid, schoolId },
     data: { ...data, role: data.role as any },
   });
+
+  if (result.count === 0) {
+    throw Errors.notFound("User", uid);
+  }
+
+  const updated = await prisma.user.findFirst({ where: { uid, schoolId } });
+  if (!updated) {
+    throw Errors.notFound("User", uid);
+  }
 
   await writeAuditLog("UPDATE_USER", performedBy, schoolId, {
     userId: uid,
@@ -130,15 +164,20 @@ export async function deactivateUser(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
-  const user = await prisma.user.findUnique({ where: { uid } });
-  if (!user || user.schoolId !== schoolId) return false;
+  assertSchoolScope(schoolId);
+
+  const user = await prisma.user.findFirst({ where: { uid, schoolId } });
+  if (!user) return false;
+  assertUserNotSuperAdmin(user.role);
 
   await auth.updateUser(uid, { disabled: true });
 
-  await prisma.user.update({
-    where: { uid },
+  const result = await prisma.user.updateMany({
+    where: { uid, schoolId },
     data: { isActive: false },
   });
+
+  if (result.count === 0) return false;
 
   await writeAuditLog("DELETE_USER", performedBy, schoolId, {
     userId: uid,

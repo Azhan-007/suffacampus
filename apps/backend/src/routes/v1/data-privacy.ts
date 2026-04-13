@@ -13,7 +13,7 @@ const createDataRequestSchema = z.object({
   type: z.enum(["export", "deletion"]),
   scope: z.array(z.string().min(1)).min(1),
   reason: z.string().max(500).optional(),
-});
+}).strict();
 
 const updatePrivacySettingsSchema = z.object({
   dataRetentionDays: z.number().int().positive().optional(),
@@ -21,7 +21,7 @@ const updatePrivacySettingsSchema = z.object({
   autoDeleteBackupsAfterDays: z.number().int().positive().optional(),
   consentRequired: z.boolean().optional(),
   cookieBannerEnabled: z.boolean().optional(),
-});
+}).strict();
 
 const DEFAULT_PRIVACY_SETTINGS = {
   dataRetentionDays: 365,

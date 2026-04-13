@@ -10,7 +10,7 @@ export const sectionSchema = z.object({
   capacity: z.number().int().positive("Capacity must be positive"),
   teacherId: z.string().optional(),
   teacherName: z.string().optional(),
-});
+}).strict();
 
 export const createClassSchema = z.object({
   className: z.string().min(1, "Class name is required").trim(),
@@ -18,7 +18,7 @@ export const createClassSchema = z.object({
   sections: z.array(sectionSchema).min(1, "At least one section is required"),
   capacity: z.number().int().positive("Capacity must be positive"),
   isActive: z.boolean().default(true),
-});
+}).strict();
 
 export const updateClassSchema = createClassSchema.partial();
 
@@ -43,7 +43,7 @@ export const createEventSchema = z.object({
   organizer: z.string().max(200).optional(),
   imageURL: z.string().url().optional(),
   isActive: z.boolean().default(true),
-});
+}).strict();
 
 export const updateEventSchema = createEventSchema.partial();
 
@@ -68,7 +68,7 @@ export const createFeeSchema = z.object({
   feeType: z.string().min(1, "Fee type is required").trim(),
   amountPaid: z.number().min(0).optional(),
   remarks: z.string().max(500).optional(),
-});
+}).strict();
 
 export const updateFeeSchema = createFeeSchema.partial();
 
@@ -91,7 +91,7 @@ export const createBookSchema = z.object({
   description: z.string().max(2000).optional(),
   coverImageURL: z.string().url().optional(),
   isActive: z.boolean().default(true),
-});
+}).strict();
 
 export const updateBookSchema = createBookSchema.partial();
 
@@ -103,7 +103,7 @@ export const libraryTransactionSchema = z.object({
   returnDate: z.string().optional(),
   status: z.enum(["Issued", "Returned", "Overdue"]).default("Issued"),
   fine: z.number().min(0).optional(),
-});
+}).strict();
 
 export type CreateBookInput = z.infer<typeof createBookSchema>;
 export type UpdateBookInput = z.infer<typeof updateBookSchema>;
@@ -132,7 +132,7 @@ export const createResultSchema = z.object({
   remarks: z.string().max(500).optional(),
   isActive: z.boolean().default(true),
   published: z.boolean().default(false),
-});
+}).strict();
 
 export const updateResultSchema = createResultSchema.partial();
 
@@ -151,7 +151,7 @@ export const periodSchema = z.object({
   startTime: z.string().min(1, "Start time is required"),
   endTime: z.string().min(1, "End time is required"),
   roomNumber: z.string().optional(),
-});
+}).strict();
 
 export const createTimetableSchema = z.object({
   classId: z.string().min(1, "Class ID is required"),
@@ -160,7 +160,7 @@ export const createTimetableSchema = z.object({
   day: z.string().min(1, "Day is required"),
   periods: z.array(periodSchema).min(1, "At least one period is required"),
   isActive: z.boolean().default(true),
-});
+}).strict();
 
 export const updateTimetableSchema = createTimetableSchema.partial();
 
@@ -194,6 +194,6 @@ export const updateSettingsSchema = z.object({
   timezone: z.string().max(50).optional(),
   emailNotifications: z.boolean().optional(),
   smsNotifications: z.boolean().optional(),
-});
+}).strict();
 
 export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;

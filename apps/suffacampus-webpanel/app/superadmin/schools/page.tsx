@@ -93,24 +93,31 @@ export default function SuperAdminSchoolsPage() {
   };
 
   const handleCreateSchool = async () => {
-    if (!formData.name || !formData.email || !formData.city) {
-      toast.error('Please fill in required fields (Name, Email, City)');
+    const schoolName = formData.name.trim();
+    const schoolCity = formData.city.trim();
+    const adminEmail = formData.adminEmail.trim();
+    const schoolEmail = formData.email.trim() || adminEmail;
+
+    if (!schoolName || !schoolEmail || !schoolCity) {
+      toast.error('Please fill in required fields (Name, School/Admin Email, City)');
       return;
     }
     try {
       setSaving(true);
-      const code = formData.code || formData.name.substring(0, 3).toUpperCase() + String(Date.now()).slice(-4);
+      const code = formData.code.trim() || schoolName.substring(0, 3).toUpperCase() + String(Date.now()).slice(-4);
       const limits = PLAN_LIMITS[formData.subscriptionPlan];
+      const adminPassword = formData.adminPassword.trim();
+      const adminDisplayName = formData.adminDisplayName.trim();
 
       const result = await SchoolService.createSchool({
-        name: formData.name.trim(),
+        name: schoolName,
         code,
         address: formData.address.trim() || undefined,
-        city: formData.city.trim(),
+        city: schoolCity,
         state: formData.state.trim() || undefined,
         pincode: formData.pincode.trim() || undefined,
         phone: formData.phone.trim() || undefined,
-        email: formData.email.trim(),
+        email: schoolEmail,
         website: normalizeOptionalUrl(formData.website),
         principalName: formData.principalName.trim() || undefined,
         primaryColor: '#4A90D9',
@@ -129,10 +136,10 @@ export default function SuperAdminSchoolsPage() {
         isActive: true,
         createdBy: 'superadmin',
         // Admin creation fields
-        ...(formData.adminEmail ? {
-          adminEmail: formData.adminEmail.trim(),
-          adminPassword: formData.adminPassword.trim() || undefined,
-          adminDisplayName: formData.adminDisplayName.trim() || undefined,
+        ...(adminEmail ? {
+          adminEmail,
+          adminPassword: adminPassword || undefined,
+          adminDisplayName: adminDisplayName || undefined,
         } : {}),
       });
 

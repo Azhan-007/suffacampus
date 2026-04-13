@@ -1,14 +1,14 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { Difficulty, type Prisma } from "@prisma/client";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth";
 import { tenantGuard } from "../../middleware/tenant";
 import { roleMiddleware } from "../../middleware/role";
 import { sendSuccess } from "../../utils/response";
-import { firestore } from "../../lib/firebase-admin";
+import { prisma } from "../../lib/prisma";
 import { Errors } from "../../errors";
 
 const preHandler = [authenticate, tenantGuard];
-const COL = "questionBank";
 
 const createQuestionSchema = z
   .object({
@@ -24,27 +24,41 @@ const createQuestionSchema = z
 
 const updateQuestionSchema = createQuestionSchema.partial();
 
+function resolveDifficulty(value?: string): Difficulty {
+  if (!value) return Difficulty.Medium;
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "easy") return Difficulty.Easy;
+  if (normalized === "medium") return Difficulty.Medium;
+  if (normalized === "hard") return Difficulty.Hard;
+
+  throw Errors.badRequest("Invalid difficulty. Valid: Easy, Medium, Hard");
+}
+
 export default async function questionBankRoutes(server: FastifyInstance) {
   // GET /question-bank — list questions for the school
   server.get<{ Querystring: Record<string, string | undefined> }>(
     "/question-bank",
     { preHandler },
     async (request, reply) => {
-      let q = firestore
-        .collection(COL)
-        .where("schoolId", "==", request.schoolId)
-        .where("isDeleted", "==", false);
+      const where: Prisma.QuestionBankWhereInput = {
+        schoolId: request.schoolId,
+      };
 
-      if (request.query.classId || request.query["class"]) {
-        q = q.where("classId", "==", request.query.classId || request.query["class"]);
+      const classId = request.query.classId || request.query["class"];
+      if (classId) {
+        where.classId = classId;
       }
       if (request.query.subject) {
-        q = q.where("subject", "==", request.query.subject);
+        where.subject = request.query.subject;
       }
 
-      q = q.orderBy("createdAt", "desc").limit(100);
-      const snap = await q.get();
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const data = await prisma.questionBank.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      });
+
       return sendSuccess(request, reply, data);
     }
   );
@@ -60,17 +74,24 @@ export default async function questionBankRoutes(server: FastifyInstance) {
       }
 
       const body = parsed.data;
-      const now = new Date().toISOString();
-      const doc = {
-        ...body,
-        schoolId: request.schoolId,
-        uploadedBy: request.user.uid,
-        isDeleted: false,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const ref = await firestore.collection(COL).add(doc);
-      return sendSuccess(request, reply, { id: ref.id, ...doc }, 201);
+
+      const question = await prisma.questionBank.create({
+        data: {
+          schoolId: request.schoolId,
+          classId: body.classId,
+          subject: body.subject,
+          topic: body.topic,
+          question: body.question,
+          options: Array.isArray(body.options)
+            ? body.options.filter((option): option is string => typeof option === "string")
+            : [],
+          answer: typeof body.answer === "string" ? body.answer : "",
+          difficulty: resolveDifficulty(body.difficulty),
+          createdBy: request.user.uid,
+        },
+      });
+
+      return sendSuccess(request, reply, question, 201);
     }
   );
 
@@ -79,19 +100,45 @@ export default async function questionBankRoutes(server: FastifyInstance) {
     "/question-bank/:id",
     { preHandler: [...preHandler, roleMiddleware(["Admin", "SuperAdmin", "Teacher"])] },
     async (request, reply) => {
-      const ref = firestore.collection(COL).doc(request.params.id);
-      const snap = await ref.get();
-      if (!snap.exists || snap.data()?.schoolId !== request.schoolId || snap.data()?.isDeleted)
+      const existing = await prisma.questionBank.findFirst({
+        where: {
+          id: request.params.id,
+          schoolId: request.schoolId,
+        },
+      });
+      if (!existing) {
         throw Errors.notFound("Question", request.params.id);
+      }
 
       const parsed = updateQuestionSchema.safeParse(request.body);
       if (!parsed.success) {
         throw Errors.validation(parsed.error.flatten().fieldErrors);
       }
 
-      const updates = { ...(parsed.data as object), updatedAt: new Date().toISOString() };
-      await ref.update(updates);
-      return sendSuccess(request, reply, { id: request.params.id, ...snap.data(), ...updates });
+      const body = parsed.data;
+
+      const updated = await prisma.questionBank.update({
+        where: { id: existing.id },
+        data: {
+          ...(typeof body.classId === "string" ? { classId: body.classId } : {}),
+          ...(typeof body.subject === "string" ? { subject: body.subject } : {}),
+          ...(typeof body.topic === "string" ? { topic: body.topic } : {}),
+          ...(typeof body.question === "string" ? { question: body.question } : {}),
+          ...(Array.isArray(body.options)
+            ? {
+                options: body.options.filter(
+                  (option): option is string => typeof option === "string"
+                ),
+              }
+            : {}),
+          ...(typeof body.answer === "string" ? { answer: body.answer } : {}),
+          ...(typeof body.difficulty === "string"
+            ? { difficulty: resolveDifficulty(body.difficulty) }
+            : {}),
+        },
+      });
+
+      return sendSuccess(request, reply, updated);
     }
   );
 
@@ -100,12 +147,18 @@ export default async function questionBankRoutes(server: FastifyInstance) {
     "/question-bank/:id",
     { preHandler: [...preHandler, roleMiddleware(["Admin", "SuperAdmin", "Teacher"])] },
     async (request, reply) => {
-      const ref = firestore.collection(COL).doc(request.params.id);
-      const snap = await ref.get();
-      if (!snap.exists || snap.data()?.schoolId !== request.schoolId)
+      const existing = await prisma.questionBank.findFirst({
+        where: {
+          id: request.params.id,
+          schoolId: request.schoolId,
+        },
+      });
+      if (!existing) {
         throw Errors.notFound("Question", request.params.id);
+      }
 
-      await ref.update({ isDeleted: true, updatedAt: new Date().toISOString() });
+      await prisma.questionBank.delete({ where: { id: existing.id } });
+
       return sendSuccess(request, reply, null);
     }
   );

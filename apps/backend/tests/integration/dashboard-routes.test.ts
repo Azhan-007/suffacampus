@@ -109,6 +109,18 @@ jest.mock("../../src/lib/prisma", () => ({
           },
         };
       }),
+      findMany: jest.fn(async ({ where, select }) => {
+        const rows = [...mockState.fees.values()].filter((row) => {
+          if (where?.schoolId && row.schoolId !== where.schoolId) return false;
+          return true;
+        });
+
+        if (!select) return rows;
+        return rows.map((row) => ({
+          amount: row.amount,
+          amountPaid: row.amountPaid,
+        }));
+      }),
     },
     auditLog: {
       findMany: jest.fn(async ({ where, orderBy, take }) => {

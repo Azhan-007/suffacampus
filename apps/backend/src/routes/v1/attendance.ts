@@ -14,9 +14,10 @@ import { requirePermission } from "../../middleware/permission";
 import { roleMiddleware } from "../../middleware/role";
 import { sendSuccess } from "../../utils/response";
 import { AppError, Errors } from "../../errors";
-import { admin, firestore } from "../../lib/firebase-admin";
+import { prisma } from "../../lib/prisma";
 import { writeAuditLog } from "../../services/audit.service";
 import { validateAttendanceDate } from "../../services/validation.service";
+import { dateTimeFrom } from "../../utils/safe-fields";
 
 const preHandler = [
   authenticate,
@@ -73,9 +74,25 @@ export default async function attendanceRoutes(server: FastifyInstance) {
     async (request, reply) => {
       const { date, classId, sectionId } = request.query;
 
-      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      // Backward compatibility: if date is omitted, return recent records
+      // so dashboard/reports pages can hydrate without a required filter.
+      if (!date) {
+        const where: Record<string, unknown> = { schoolId: request.schoolId };
+        if (classId) where.classId = classId;
+        if (sectionId) where.sectionId = sectionId;
+
+        const records = await prisma.attendance.findMany({
+          where,
+          orderBy: [{ date: "desc" }, { studentName: "asc" }],
+          take: 2000,
+        });
+
+        return sendSuccess(request, reply, records);
+      }
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         throw Errors.badRequest(
-          "Query param 'date' is required in YYYY-MM-DD format"
+          "Query param 'date' must be in YYYY-MM-DD format"
         );
       }
 
@@ -99,64 +116,62 @@ export default async function attendanceRoutes(server: FastifyInstance) {
       const { classId, sectionId, date, entries } = result.data;
       const schoolId = request.schoolId;
       const markedBy = request.user.uid;
-      const now = admin.firestore.Timestamp.now();
+      const attendanceDate = dateTimeFrom(date);
 
-      // Process in batches of 500 (Firestore limit)
-      const BATCH_SIZE = 500;
-      const created: Array<Record<string, unknown>> = [];
+      if (!attendanceDate) {
+        throw Errors.badRequest("Invalid attendance date");
+      }
+
+      const studentIds = Array.from(new Set(entries.map((entry) => entry.studentId)));
+      const existing = await prisma.attendance.findMany({
+        where: {
+          schoolId,
+          date: attendanceDate,
+          studentId: { in: studentIds },
+        },
+        select: { studentId: true },
+      });
+
+      const existingStudentIds = new Set(existing.map((row) => row.studentId));
       const errors: Array<{ studentId: string; error: string }> = [];
-
-      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-        const chunk = entries.slice(i, i + BATCH_SIZE);
-        const batch = firestore.batch();
-
-        for (const entry of chunk) {
-          // Check for duplicates
-          const dupSnap = await firestore
-            .collection("attendance")
-            .where("schoolId", "==", schoolId)
-            .where("studentId", "==", entry.studentId)
-            .where("date", "==", date)
-            .limit(1)
-            .get();
-
-          if (!dupSnap.empty) {
+      const rowsToCreate = entries
+        .filter((entry) => {
+          if (existingStudentIds.has(entry.studentId)) {
             errors.push({ studentId: entry.studentId, error: "Duplicate attendance" });
-            continue;
+            return false;
           }
 
-          const docRef = firestore.collection("attendance").doc();
-          const record = {
-            id: docRef.id,
-            schoolId,
-            studentId: entry.studentId,
-            classId,
-            sectionId,
-            date,
-            status: entry.status,
-            remarks: entry.remarks ?? null,
-            markedBy,
-            createdAt: now,
-          };
+          return true;
+        })
+        .map((entry) => ({
+          schoolId,
+          studentId: entry.studentId,
+          classId,
+          sectionId,
+          date: attendanceDate,
+          status: entry.status,
+          remarks: entry.remarks ?? null,
+          markedBy,
+        }));
 
-          batch.set(docRef, record);
-          created.push(record);
-        }
-
-        await batch.commit();
-      }
+      const created = rowsToCreate.length
+        ? await prisma.attendance.createMany({
+            data: rowsToCreate,
+            skipDuplicates: true,
+          })
+        : { count: 0 };
 
       await writeAuditLog("BULK_ATTENDANCE", markedBy, schoolId, {
         date,
         classId,
         sectionId,
         totalEntries: entries.length,
-        created: created.length,
+        created: created.count,
         errors: errors.length,
       });
 
       return sendSuccess(request, reply, {
-        created: created.length,
+        created: created.count,
         errors,
         total: entries.length,
       }, 201);
@@ -170,26 +185,47 @@ export default async function attendanceRoutes(server: FastifyInstance) {
     async (request, reply) => {
       const { classId, sectionId, fromDate, toDate } = request.query;
 
-      let query: FirebaseFirestore.Query = firestore
-        .collection("attendance")
-        .where("schoolId", "==", request.schoolId);
+      const where: Record<string, unknown> = { schoolId: request.schoolId };
+      if (classId) where.classId = classId;
+      if (sectionId) where.sectionId = sectionId;
 
-      if (classId) query = query.where("classId", "==", classId);
-      if (sectionId) query = query.where("sectionId", "==", sectionId);
-      if (fromDate) query = query.where("date", ">=", fromDate);
-      if (toDate) query = query.where("date", "<=", toDate);
+      const parsedFromDate = fromDate ? dateTimeFrom(fromDate) : null;
+      const parsedToDate = toDate ? dateTimeFrom(toDate) : null;
 
-      const snapshot = await query.get();
-      const records = snapshot.docs.map((d) => d.data());
+      if (fromDate && !parsedFromDate) {
+        throw Errors.badRequest("fromDate must be in YYYY-MM-DD format");
+      }
+      if (toDate && !parsedToDate) {
+        throw Errors.badRequest("toDate must be in YYYY-MM-DD format");
+      }
 
-      const stats = { total: records.length, present: 0, absent: 0, late: 0, excused: 0 };
-      for (const r of records) {
-        switch (r.status) {
-          case "Present": stats.present++; break;
-          case "Absent": stats.absent++; break;
-          case "Late": stats.late++; break;
-          case "Excused": stats.excused++; break;
+      if (parsedFromDate || parsedToDate) {
+        const dateFilter: { gte?: Date; lte?: Date } = {};
+        if (parsedFromDate) {
+          dateFilter.gte = parsedFromDate;
         }
+        if (parsedToDate) {
+          const endOfDay = new Date(parsedToDate);
+          endOfDay.setUTCHours(23, 59, 59, 999);
+          dateFilter.lte = endOfDay;
+        }
+        where.date = dateFilter;
+      }
+
+      const grouped = await prisma.attendance.groupBy({
+        by: ["status"],
+        where: where as any,
+        _count: { _all: true },
+      });
+
+      const stats = { total: 0, present: 0, absent: 0, late: 0, excused: 0 };
+      for (const row of grouped) {
+        const count = row._count._all;
+        stats.total += count;
+        if (row.status === "Present") stats.present = count;
+        if (row.status === "Absent") stats.absent = count;
+        if (row.status === "Late") stats.late = count;
+        if (row.status === "Excused") stats.excused = count;
       }
 
       const attendanceRate = stats.total > 0
@@ -277,23 +313,44 @@ export default async function attendanceRoutes(server: FastifyInstance) {
         throw new AppError(403, "FORBIDDEN", "You can only view your own attendance");
       }
 
-      let query: FirebaseFirestore.Query = firestore
-        .collection("attendance")
-        .where("schoolId", "==", request.schoolId)
-        .where("studentId", "==", studentId);
+      const parsedFromDate = fromDate ? dateTimeFrom(fromDate) : null;
+      const parsedToDate = toDate ? dateTimeFrom(toDate) : null;
 
-      if (fromDate) query = query.where("date", ">=", fromDate);
-      if (toDate) query = query.where("date", "<=", toDate);
+      if (fromDate && !parsedFromDate) {
+        throw Errors.badRequest("fromDate must be in YYYY-MM-DD format");
+      }
+      if (toDate && !parsedToDate) {
+        throw Errors.badRequest("toDate must be in YYYY-MM-DD format");
+      }
 
-      query = query.orderBy("date", "desc").limit(200);
+      const where: Record<string, unknown> = {
+        schoolId: request.schoolId,
+        studentId,
+      };
 
-      const snapshot = await query.get();
-      const records = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      if (parsedFromDate || parsedToDate) {
+        const dateFilter: { gte?: Date; lte?: Date } = {};
+        if (parsedFromDate) {
+          dateFilter.gte = parsedFromDate;
+        }
+        if (parsedToDate) {
+          const endOfDay = new Date(parsedToDate);
+          endOfDay.setUTCHours(23, 59, 59, 999);
+          dateFilter.lte = endOfDay;
+        }
+        where.date = dateFilter;
+      }
+
+      const records = await prisma.attendance.findMany({
+        where: where as any,
+        orderBy: { date: "desc" },
+        take: 200,
+      });
 
       // Compute summary stats
       const total = records.length;
-      const present = records.filter((r: any) => r.status === "Present").length;
-      const absent = records.filter((r: any) => r.status === "Absent").length;
+      const present = records.filter((r) => r.status === "Present").length;
+      const absent = records.filter((r) => r.status === "Absent").length;
       const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
 
       return sendSuccess(request, reply, {

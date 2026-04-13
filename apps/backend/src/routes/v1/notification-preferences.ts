@@ -19,7 +19,7 @@ const updateNotificationPreferencesSchema = z.object({
   inAppEnabled: z.boolean().optional(),
   pushEnabled: z.boolean().optional(),
   emailEnabled: z.boolean().optional(),
-});
+}).strict();
 
 type UpdateNotificationPreferencesBody = z.infer<typeof updateNotificationPreferencesSchema>;
 

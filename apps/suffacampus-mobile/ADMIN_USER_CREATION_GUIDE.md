@@ -88,8 +88,8 @@ For bulk user creation, you can use this script structure:
 
 ```javascript
 const users = [
-  { username: "teacher1", name: "Teacher One", role: "teacher", password: "pass123" },
-  { username: "student1", name: "Student One", role: "student", password: "pass123" },
+  { username: "teacher1", name: "Teacher One", role: "teacher", password: process.env.TEST_TEACHER_PASSWORD },
+  { username: "student1", name: "Student One", role: "student", password: process.env.TEST_STUDENT_PASSWORD },
 ];
 
 // Loop and create each user in Firebase Auth + Firestore
@@ -107,8 +107,8 @@ const users = [
 
 ## Test Accounts
 
-Current test accounts:
-- Username: `teacher` / Password: `password123` (Role: teacher)
-- Username: `student` / Password: `password123` (Role: student)
+Current test accounts are configured via environment variables:
+- Teacher credentials: `TEST_TEACHER_EMAIL` / `TEST_TEACHER_PASSWORD`
+- Student credentials: `TEST_STUDENT_EMAIL` / `TEST_STUDENT_PASSWORD`
 
 Update their Firestore documents to add `username` field if missing.

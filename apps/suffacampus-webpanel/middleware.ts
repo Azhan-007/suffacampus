@@ -20,8 +20,13 @@ type UserRole =
   | 'Principal'
   | 'Parent';
 
+const DEBUG_ROUTES_ENABLED = process.env.NODE_ENV !== 'production';
+const DEBUG_PATHS = ['/test-login', '/test-bare'];
+
 // Routes that don't require authentication
-const PUBLIC_PATHS = ['/login', '/forgot-password', '/pricing', '/test-login', '/test-bare'];
+const PUBLIC_PATHS = DEBUG_ROUTES_ENABLED
+  ? ['/login', '/forgot-password', '/pricing', ...DEBUG_PATHS]
+  : ['/login', '/forgot-password', '/pricing'];
 const AUTH_REDIRECT_PUBLIC_PATHS = ['/login', '/forgot-password'];
 
 const ROUTE_ACL: { prefix: string; roles: UserRole[] }[] = [
@@ -110,6 +115,15 @@ export function middleware(request: NextRequest) {
   // Skip static assets & API routes
   if (isAssetOrApi(pathname)) {
     return NextResponse.next();
+  }
+
+  if (!DEBUG_ROUTES_ENABLED) {
+    const isDebugPath = DEBUG_PATHS.some(
+      (p) => pathname === p || pathname.startsWith(p + '/')
+    );
+    if (isDebugPath) {
+      return NextResponse.redirect(new URL('/login', request.url));
+    }
   }
 
   const authCookie =

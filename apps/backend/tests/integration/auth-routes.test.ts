@@ -85,6 +85,16 @@ jest.mock("../../src/lib/prisma", () => {
     }
   );
 
+  const schoolConfigCreate = jest.fn(
+    async ({ data }: { data: Record<string, unknown> }) => {
+      const id =
+        (data.id as string | undefined) ??
+        `cfg_${Math.random().toString(36).slice(2, 10)}`;
+      seedDoc("schoolConfigs", id, { ...data, id });
+      return { id, ...data };
+    }
+  );
+
   const prisma = {
     user: {
       findUnique: jest.fn(
@@ -197,12 +207,17 @@ jest.mock("../../src/lib/prisma", () => {
       create: subscriptionCreate,
       deleteMany: jest.fn(async () => ({ count: 0 })),
     },
+    schoolConfig: {
+      create: schoolConfigCreate,
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+    },
     $transaction: jest.fn(async (arg: unknown) => {
       if (typeof arg === "function") {
         const tx = {
           school: { create: schoolCreate },
           user: { create: userCreate },
           subscription: { create: subscriptionCreate },
+          schoolConfig: { create: schoolConfigCreate },
         };
         return (arg as (input: typeof tx) => Promise<unknown>)(tx);
       }
@@ -220,6 +235,29 @@ jest.mock("../../src/lib/prisma", () => {
 
 jest.mock("../../src/services/audit.service", () => ({
   writeAuditLog: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("../../src/services/session.service", () => ({
+  validateSessionAccessToken: jest.fn().mockResolvedValue(null),
+  createSessionWithAccessToken: jest.fn().mockResolvedValue({
+    accessToken: "session_access_token",
+    session: {
+      id: "sess_1",
+      userUid: "user_1",
+      schoolId: "school_1",
+      device: "Web",
+      ipAddress: "127.0.0.1",
+      userAgent: "Jest",
+      currentJti: "jti_1",
+      lastActiveAt: new Date("2024-01-01T00:00:00.000Z"),
+      expiresAt: new Date("2024-01-02T00:00:00.000Z"),
+      revokedAt: null,
+    },
+  }),
+  decodeSessionAccessToken: jest.fn().mockReturnValue(null),
+  revokeAllSessionsForUser: jest.fn().mockResolvedValue({ revokedCount: 0 }),
+  revokeSessionById: jest.fn().mockResolvedValue(true),
+  revokeTokenByJti: jest.fn().mockResolvedValue(true),
 }));
 
 let server: FastifyInstance;

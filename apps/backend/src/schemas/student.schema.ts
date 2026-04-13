@@ -49,6 +49,6 @@ export const createStudentSchema = z.object({
   enrollmentDate: z.string().optional(),
   isActive: z.boolean().optional(),
   studentId: z.string().optional(),
-});
+}).strict();
 
 export type CreateStudentInput = z.infer<typeof createStudentSchema>;

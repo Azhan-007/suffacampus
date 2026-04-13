@@ -5,6 +5,7 @@
 
 import { ActivityRepository } from "../repositories/activity.repository";
 import { publishActivityCreated } from "../lib/realtime";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 const activityRepository = new ActivityRepository();
 
@@ -23,6 +24,8 @@ export class ActivityService {
     actionUrl?: string;
     metadata?: Record<string, unknown>;
   }) {
+    assertSchoolScope(data.schoolId);
+
     const activity = await activityRepository.create(data.schoolId, {
       userId: data.userId,
       studentId: data.studentId ?? null,
@@ -63,6 +66,8 @@ export class ActivityService {
     limit?: number;
     skip?: number;
   }) {
+    assertSchoolScope(params.schoolId);
+
     const limit = Math.min(params.limit || 20, 100);
     const skip = params.skip || 0;
 
@@ -76,6 +81,8 @@ export class ActivityService {
    * Get a single activity
    */
   static async getActivity(schoolId: string, activityId: string) {
+    assertSchoolScope(schoolId);
+
     return activityRepository.findById(schoolId, activityId);
   }
 
@@ -83,6 +90,8 @@ export class ActivityService {
    * Delete an activity
    */
   static async deleteActivity(schoolId: string, activityId: string) {
+    assertSchoolScope(schoolId);
+
     return activityRepository.softDelete(schoolId, activityId);
   }
 
@@ -90,6 +99,8 @@ export class ActivityService {
    * Clean up old activities (older than 90 days)
    */
   static async cleanupOldActivities(schoolId: string) {
+    assertSchoolScope(schoolId);
+
     return activityRepository.cleanupOld(schoolId);
   }
 }

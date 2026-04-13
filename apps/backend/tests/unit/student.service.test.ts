@@ -26,7 +26,25 @@ const mockState = {
 
 jest.mock("../../src/lib/prisma", () => ({
   prisma: {
+    school: {
+      findUnique: jest.fn(async ({ where: { id } }) => {
+        const school = mockState.schools.get(id);
+        if (!school) return null;
+
+        return {
+          subscriptionPlan: school.subscriptionPlan,
+          maxStudents: school.maxStudents,
+          maxTeachers: school.maxTeachers,
+        };
+      }),
+    },
     student: {
+      count: jest.fn(async ({ where }) =>
+        [...mockState.students.values()].filter(
+          (student) =>
+            student.schoolId === where.schoolId && student.isDeleted === where.isDeleted
+        ).length
+      ),
       create: jest.fn(async ({ data }) => {
         if (!mockState.schools.has(data.schoolId)) {
           throw new Error("Foreign key constraint violated: Student_schoolId_fkey");
@@ -62,7 +80,13 @@ jest.mock("../../src/lib/prisma", () => ({
 }));
 
 function seedSchool(id: string) {
-  mockState.schools.set(id, { id, name: "Test School" });
+  mockState.schools.set(id, {
+    id,
+    name: "Test School",
+    subscriptionPlan: "free",
+    maxStudents: 200,
+    maxTeachers: 20,
+  });
 }
 
 function seedStudent(id: string, data: Record<string, unknown>) {

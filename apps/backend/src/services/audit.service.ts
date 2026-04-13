@@ -1,7 +1,8 @@
 import { prisma } from "../lib/prisma";
-import pino from "pino";
+import { createLogger } from "../utils/logger";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
-const log = pino({ name: "audit" });
+const log = createLogger("audit");
 
 type JsonMap = Record<string, unknown>;
 
@@ -62,6 +63,8 @@ export async function writeAuditLog(
   metadata: JsonMap = {},
   options: WriteAuditLogOptions = {}
 ): Promise<void> {
+  assertSchoolScope(schoolId);
+
   const normalizedAction = normalizeAction(action);
   const normalizedSchoolId = asNonEmptyString(schoolId);
 
@@ -126,6 +129,8 @@ export async function getAuditLogs(
     cursor?: string;
   } = {}
 ) {
+  assertSchoolScope(schoolId);
+
   const where: Record<string, unknown> = { schoolId };
 
   if (options.action) where.action = options.action;

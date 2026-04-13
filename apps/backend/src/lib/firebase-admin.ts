@@ -1,4 +1,8 @@
-import admin, { type auth as AuthType, type firestore as FirestoreType, type storage as StorageType } from "firebase-admin";
+import admin, {
+  type auth as AuthType,
+  type firestore as FirestoreType,
+  type storage as StorageType,
+} from "firebase-admin";
 
 // Module-level singletons — initialised at most once.
 let _app: admin.app.App | null = null;
@@ -45,15 +49,15 @@ export const auth: AuthType.Auth = new Proxy({} as AuthType.Auth, {
   },
 });
 
-export const firestore: FirestoreType.Firestore = new Proxy({} as FirestoreType.Firestore, {
-  get: (_target, prop) => {
-    if (!_firestore) {
-      _firestore = admin.firestore(getApp());
-      _firestore.settings({ ignoreUndefinedProperties: true });
-    }
-    return (_firestore as any)[prop as string];
-  },
-});
+export const firestore: FirestoreType.Firestore = new Proxy(
+  {} as FirestoreType.Firestore,
+  {
+    get: (_target, prop) => {
+      if (!_firestore) _firestore = admin.firestore(getApp());
+      return (_firestore as any)[prop as string];
+    },
+  }
+);
 
 export const storage: StorageType.Storage = new Proxy({} as StorageType.Storage, {
   get: (_target, prop) => {

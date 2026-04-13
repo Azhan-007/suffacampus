@@ -1,7 +1,12 @@
 import { prisma } from "../lib/prisma";
 import { writeAuditLog } from "./audit.service";
+import { assertSchoolScope } from "../lib/tenant-scope";
+import { dateTimeFrom } from "../utils/safe-fields";
+import { Errors } from "../errors";
 
 async function generateInvoiceNumber(schoolId: string): Promise<string> {
+  assertSchoolScope(schoolId);
+
   const school = await prisma.school.findUnique({ where: { id: schoolId } });
   const schoolCode = school?.code ?? schoolId.slice(0, 6).toUpperCase();
 
@@ -30,6 +35,15 @@ export async function createPaidInvoice(params: {
   billingPeriodEnd: string;
   description?: string;
 }) {
+  assertSchoolScope(params.schoolId);
+
+  const periodStart = dateTimeFrom(params.billingPeriodStart);
+  const periodEnd = dateTimeFrom(params.billingPeriodEnd);
+
+  if (!periodStart || !periodEnd) {
+    throw Errors.badRequest("billingPeriodStart and billingPeriodEnd must be valid dates");
+  }
+
   const invoiceNumber = await generateInvoiceNumber(params.schoolId);
 
   const invoice = await prisma.invoice.create({
@@ -42,8 +56,8 @@ export async function createPaidInvoice(params: {
       status: "paid",
       razorpayPaymentId: params.razorpayPaymentId,
       razorpayOrderId: params.razorpayOrderId,
-      periodStart: params.billingPeriodStart,
-      periodEnd: params.billingPeriodEnd,
+      periodStart,
+      periodEnd,
       description: params.description ?? `Subscription payment — ${params.plan} plan`,
       paidAt: new Date(),
     },
@@ -66,6 +80,8 @@ export async function createCreditNote(params: {
   currency: string;
   description: string;
 }) {
+  assertSchoolScope(params.schoolId);
+
   const invoiceNumber = await generateInvoiceNumber(params.schoolId);
 
   return prisma.invoice.create({
@@ -76,14 +92,16 @@ export async function createCreditNote(params: {
       amount: -params.amount,
       currency: params.currency,
       status: "credit",
-      periodStart: "",
-      periodEnd: "",
+      periodStart: null,
+      periodEnd: null,
       description: params.description,
     },
   });
 }
 
 export async function getInvoicesBySchool(schoolId: string, limit = 50) {
+  assertSchoolScope(schoolId);
+
   return prisma.invoice.findMany({
     where: { schoolId },
     orderBy: { createdAt: "desc" },
@@ -92,6 +110,10 @@ export async function getInvoicesBySchool(schoolId: string, limit = 50) {
 }
 
 export async function getInvoiceById(invoiceId: string, schoolId?: string) {
+  if (schoolId !== undefined) {
+    assertSchoolScope(schoolId);
+  }
+
   const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
   if (!invoice) return null;
   if (schoolId && invoice.schoolId !== schoolId) return null;

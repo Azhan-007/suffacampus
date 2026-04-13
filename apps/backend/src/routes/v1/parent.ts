@@ -24,6 +24,7 @@ import { sendSuccess, sendPaginated } from "../../utils/response.js";
 import { Errors } from "../../errors/index.js";
 import { paginationSchema } from "../../utils/pagination.js";
 import { z } from "zod";
+import { prisma } from "../../lib/prisma.js";
 import {
   createParentInvite,
   redeemParentInvite,
@@ -40,13 +41,13 @@ export default async function parentRoutes(server: FastifyInstance) {
   const parentChain = [
     authenticate,
     tenantGuard,
-    roleMiddleware(["Parent", "Admin", "SuperAdmin"]),
+    roleMiddleware(["Parent"]),
   ];
 
   const adminChain = [
     authenticate,
     tenantGuard,
-    roleMiddleware(["Admin", "SuperAdmin", "Principal"]),
+    roleMiddleware(["Admin", "Principal"]),
   ];
 
   // ===================================================================
@@ -55,7 +56,7 @@ export default async function parentRoutes(server: FastifyInstance) {
 
   const inviteSchema = z.object({
     studentId: z.string().min(1, "studentId is required"),
-  });
+  }).strict();
 
   server.post(
     "/parent/invites",
@@ -82,16 +83,15 @@ export default async function parentRoutes(server: FastifyInstance) {
     "/parent/invites",
     { preHandler: adminChain },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const { firestore } = await import("../../lib/firebase-admin.js");
-      const snap = await firestore
-        .collection("parentInvites")
-        .where("schoolId", "==", request.schoolId)
-        .where("isActive", "==", true)
-        .orderBy("createdAt", "desc")
-        .limit(100)
-        .get();
+      const invites = await prisma.parentInvite.findMany({
+        where: {
+          schoolId: request.schoolId,
+          isActive: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      });
 
-      const invites = snap.docs.map((d: FirebaseFirestore.QueryDocumentSnapshot) => d.data());
       return sendSuccess(request, reply, invites);
     }
   );
@@ -102,7 +102,7 @@ export default async function parentRoutes(server: FastifyInstance) {
 
   const linkSchema = z.object({
     code: z.string().min(1, "Invite code is required"),
-  });
+  }).strict();
 
   server.post(
     "/parent/link",

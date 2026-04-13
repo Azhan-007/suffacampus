@@ -21,6 +21,15 @@ jest.mock("../../src/lib/prisma", () => ({
   prisma: {
     user: {
       findUnique: jest.fn(async ({ where: { uid } }) => mockState.users.get(uid) ?? null),
+      findFirst: jest.fn(async ({ where }) => {
+        return (
+          [...mockState.users.values()].find((row) => {
+            if (where?.uid && row.uid !== where.uid) return false;
+            if (where?.schoolId && row.schoolId !== where.schoolId) return false;
+            return true;
+          }) ?? null
+        );
+      }),
       create: jest.fn(async ({ data }) => {
         const row = {
           id: `usr_${mockState.users.size + 1}`,
@@ -58,6 +67,16 @@ jest.mock("../../src/lib/prisma", () => ({
         const updated = { ...existing, ...data, updatedAt: new Date() };
         mockState.users.set(uid, updated);
         return updated;
+      }),
+      updateMany: jest.fn(async ({ where, data }) => {
+        let count = 0;
+        for (const [uid, row] of mockState.users.entries()) {
+          if (where?.uid && uid !== where.uid) continue;
+          if (where?.schoolId && row.schoolId !== where.schoolId) continue;
+          mockState.users.set(uid, { ...row, ...data, updatedAt: new Date() });
+          count += 1;
+        }
+        return { count };
       }),
     },
   },

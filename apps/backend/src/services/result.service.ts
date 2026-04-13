@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import type { CreateResultInput, UpdateResultInput } from "../schemas/modules.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 /** Auto-calculate grade from percentage */
 function calculateGrade(percentage: number): string {
@@ -19,6 +20,8 @@ export async function createResult(
   data: CreateResultInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const percentage = data.percentage ?? (data.marksObtained / data.totalMarks) * 100;
   const grade = data.grade ?? calculateGrade(percentage);
   const status = data.status ?? (percentage >= 33 ? "Pass" : "Fail");
@@ -69,6 +72,8 @@ export async function getResultsBySchool(
     subject?: string;
   } = {}
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId, isActive: true };
   if (filters.studentId) where.studentId = filters.studentId;
   if (filters.classId) where.classId = filters.classId;
@@ -96,6 +101,8 @@ export async function getResultsBySchool(
 }
 
 export async function getResultById(resultId: string, schoolId: string) {
+  assertSchoolScope(schoolId);
+
   const result = await prisma.result.findUnique({ where: { id: resultId } });
   if (!result || result.schoolId !== schoolId || !result.isActive) return null;
   return result;
@@ -106,6 +113,8 @@ export async function getResultsByStudent(
   schoolId: string,
   pagination: { limit?: number; cursor?: string }
 ) {
+  assertSchoolScope(schoolId);
+
   const limit = Math.min(pagination.limit ?? 20, 100);
 
   const results = await prisma.result.findMany({
@@ -130,6 +139,8 @@ export async function updateResult(
   data: UpdateResultInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.result.findUnique({ where: { id: resultId } });
   if (!existing) throw Errors.notFound("Result", resultId);
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
@@ -164,6 +175,8 @@ export async function softDeleteResult(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.result.findUnique({ where: { id: resultId } });
   if (!existing || existing.schoolId !== schoolId || !existing.isActive) return false;
 

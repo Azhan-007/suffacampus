@@ -1,13 +1,16 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { AttendanceStatus } from "@prisma/client";
-import { authenticate } from "../../middleware/auth";
-import { tenantGuard } from "../../middleware/tenant";
-import { roleMiddleware } from "../../middleware/role";
+import { apiKeyOrUserAuth } from "../../middleware/apiKey";
+import {
+  analyticsRateLimitProfile,
+  exportsRateLimitProfile,
+} from "../../plugins/rateLimit";
 import { prisma } from "../../lib/prisma";
 import { generateReport, ReportType } from "../../services/report.service";
 import { sendSuccess } from "../../utils/response";
 import { Errors } from "../../errors";
 import { z } from "zod";
+import { moneyToNumber } from "../../utils/safe-fields";
 
 const reportSchema = z.object({
   type: z.enum([
@@ -21,36 +24,43 @@ const reportSchema = z.object({
   endDate: z.string().min(1, "End date required"),
   filters: z.record(z.string(), z.string()).optional(),
   recipientEmails: z.array(z.string().email()).optional(),
-});
+}).strict();
 
 export default async function reportRoutes(server: FastifyInstance) {
-  const adminChain = [
-    authenticate,
-    tenantGuard,
-    roleMiddleware(["Admin", "SuperAdmin", "Principal"]),
-  ];
+  const adminAccess = apiKeyOrUserAuth({
+    requiredPermission: "reports:write",
+    allowedRoles: ["Admin", "SuperAdmin", "Principal"],
+  });
 
-  const dashboardChain = [
-    authenticate,
-    tenantGuard,
-    roleMiddleware(["Admin", "Staff", "SuperAdmin"]),
-  ];
+  const dashboardAccess = apiKeyOrUserAuth({
+    requiredPermission: "analytics:read",
+    allowedRoles: ["Admin", "Staff", "SuperAdmin"],
+  });
+
+  const reportReadAccess = apiKeyOrUserAuth({
+    requiredPermission: "reports:read",
+    allowedRoles: ["Admin", "SuperAdmin", "Principal"],
+  });
 
   // -----------------------------------------------------------------------
   // GET /reports/dashboard — dashboard report skeleton
   // -----------------------------------------------------------------------
   server.get(
     "/reports/dashboard",
-    { preHandler: dashboardChain },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler: [dashboardAccess],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      console.log("ROLE INSIDE ROUTE:", request.user.role);
-
       const schoolId = request.user.schoolId;
       if (typeof schoolId !== "string" || schoolId.trim().length === 0) {
         throw Errors.tenantMissing();
       }
 
-      const today = new Date().toISOString().slice(0, 10);
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const nextDayStart = new Date(dayStart);
+      nextDayStart.setDate(nextDayStart.getDate() + 1);
 
       const [
         totalStudents,
@@ -67,7 +77,7 @@ export default async function reportRoutes(server: FastifyInstance) {
           by: ["status"],
           where: {
             schoolId,
-            date: today,
+            date: { gte: dayStart, lt: nextDayStart },
             status: {
               in: [
                 AttendanceStatus.Present,
@@ -99,8 +109,8 @@ export default async function reportRoutes(server: FastifyInstance) {
         if (row.status === AttendanceStatus.Late) attendance.late = row._count._all;
       }
 
-      const total = feeTotals._sum.totalAmount ?? 0;
-      const collected = feeTotals._sum.paidAmount ?? 0;
+      const total = moneyToNumber(feeTotals._sum.totalAmount);
+      const collected = moneyToNumber(feeTotals._sum.paidAmount);
       const pending = total - collected;
 
       return sendSuccess(request, reply, {
@@ -123,7 +133,10 @@ export default async function reportRoutes(server: FastifyInstance) {
   // -----------------------------------------------------------------------
   server.post(
     "/reports/generate",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: exportsRateLimitProfile },
+      preHandler: [adminAccess],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const parsed = reportSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -163,7 +176,10 @@ export default async function reportRoutes(server: FastifyInstance) {
   // -----------------------------------------------------------------------
   server.get(
     "/reports",
-    { preHandler: adminChain },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler: [reportReadAccess],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const schoolId = request.user.schoolId;
       if (typeof schoolId !== "string" || schoolId.trim().length === 0) {
@@ -172,19 +188,10 @@ export default async function reportRoutes(server: FastifyInstance) {
       const query = request.query as Record<string, string>;
       const limit = Math.min(parseInt(query.limit) || 20, 100);
 
-      const { firestore } = await import("../../lib/firebase-admin.js");
-      const snapshot = await firestore
-        .collection("reports")
-        .where("schoolId", "==", schoolId)
-        .orderBy("createdAt", "desc")
-        .limit(limit)
-        .get();
-
-      const reports = snapshot.docs.map((doc: FirebaseFirestore.QueryDocumentSnapshot) => {
-        const data = doc.data();
-        // Don't send full HTML in list view
-        const { html, ...rest } = data;
-        return rest;
+      const reports = await prisma.report.findMany({
+        where: { schoolId },
+        orderBy: { createdAt: "desc" },
+        take: limit,
       });
 
       return sendSuccess(request, reply, reports);

@@ -11,7 +11,7 @@ import {
   getSignedUrl,
   validateFile,
 } from "../../services/storage.service";
-import { sendSuccess } from "../../utils/response";
+import { sendError, sendSuccess } from "../../utils/response";
 
 type FileCategory = "photos" | "documents" | "reports" | "receipts" | "imports";
 const VALID_CATEGORIES: FileCategory[] = [
@@ -30,9 +30,6 @@ export default async function uploadRoutes(server: FastifyInstance) {
     enforceSubscription,
   ];
 
-  // Register multipart parser for this plugin scope
-  // Requires @fastify/multipart (will gracefully fail if not installed)
-
   // -----------------------------------------------------------------------
   // POST /uploads/:category — upload a file
   //   Body: multipart/form-data with a "file" field
@@ -44,64 +41,100 @@ export default async function uploadRoutes(server: FastifyInstance) {
     async (request, reply) => {
       const { category } = request.params;
       const schoolId = request.schoolId as string;
+      const normalizedCategory = category as FileCategory;
 
-      if (!VALID_CATEGORIES.includes(category as FileCategory)) {
-        return reply.status(400).send({
-          success: false,
-          error: {
-            code: "INVALID_CATEGORY",
-            message: `Invalid category. Valid: ${VALID_CATEGORIES.join(", ")}`,
-          },
-        });
+      if (!VALID_CATEGORIES.includes(normalizedCategory)) {
+        return sendError(
+          request,
+          reply,
+          400,
+          "INVALID_CATEGORY",
+          `Invalid category. Valid: ${VALID_CATEGORIES.join(", ")}`
+        );
       }
 
-      // Handle multipart upload
-      const data = await request.file();
+      let data: Awaited<ReturnType<typeof request.file>>;
+      try {
+        data = await request.file();
+      } catch (error) {
+        request.log.warn({ err: error }, "Failed to parse multipart upload");
+        return sendError(
+          request,
+          reply,
+          400,
+          "INVALID_MULTIPART_PAYLOAD",
+          "Invalid multipart upload payload"
+        );
+      }
 
       if (!data) {
-        return reply.status(400).send({
-          success: false,
-          error: {
-            code: "NO_FILE",
-            message: "No file provided in the request",
-          },
-        });
+        return sendError(
+          request,
+          reply,
+          400,
+          "NO_FILE",
+          "No file provided in the request"
+        );
       }
 
-      const chunks: Buffer[] = [];
-      for await (const chunk of data.file) {
-        chunks.push(chunk as Buffer);
+      let buffer: Buffer;
+      try {
+        buffer = await data.toBuffer();
+      } catch (error) {
+        const code =
+          typeof error === "object" && error !== null && "code" in error
+            ? String((error as { code?: string }).code)
+            : undefined;
+
+        if (code === "FST_REQ_FILE_TOO_LARGE") {
+          return sendError(
+            request,
+            reply,
+            413,
+            "FILE_TOO_LARGE",
+            "Uploaded file exceeds allowed size"
+          );
+        }
+
+        request.log.warn({ err: error }, "Failed to buffer uploaded file");
+        return sendError(
+          request,
+          reply,
+          400,
+          "INVALID_UPLOAD_STREAM",
+          "Unable to read uploaded file"
+        );
       }
-      const buffer = Buffer.concat(chunks);
 
       const contentType = data.mimetype as string;
       const originalName = data.filename as string;
 
       // Validate before upload
       const validation = validateFile(
-        category as FileCategory,
+        normalizedCategory,
         contentType,
-        buffer.length
+        buffer.length,
+        buffer
       );
       if (!validation.valid) {
-        return reply.status(400).send({
-          success: false,
-          error: {
-            code: "FILE_VALIDATION_FAILED",
-            message: validation.error,
-          },
-        });
+        return sendError(
+          request,
+          reply,
+          validation.error?.toLowerCase().includes("too large") ? 413 : 400,
+          "FILE_VALIDATION_FAILED",
+          validation.error ?? "Invalid upload"
+        );
       }
 
       const result = await uploadFile({
         schoolId,
-        category: category as FileCategory,
+        category: normalizedCategory,
         originalName,
         buffer,
         contentType,
       });
 
-      return sendSuccess(request, reply, result, 201);
+      return reply.status(201).send({ url: result.publicUrl });
     }
   );
 

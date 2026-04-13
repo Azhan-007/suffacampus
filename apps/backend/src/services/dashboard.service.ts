@@ -1,5 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { recordDashboardQuery } from "../plugins/metrics";
+import { moneyFrom, moneyToNumber } from "../utils/safe-fields";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 /**
  * Dashboard statistics for a school — uses Prisma count/aggregate queries.
@@ -17,6 +19,8 @@ export interface DashboardStats {
 }
 
 export async function getDashboardStats(schoolId: string): Promise<DashboardStats> {
+  assertSchoolScope(schoolId);
+
   const started = process.hrtime.bigint();
   let ok = false;
   try {
@@ -26,21 +30,35 @@ export async function getDashboardStats(schoolId: string): Promise<DashboardStat
       totalClasses,
       totalEvents,
       totalBooks,
-      feeStats,
+      feeRows,
     ] = await Promise.all([
       prisma.student.count({ where: { schoolId, isDeleted: false } }),
       prisma.teacher.count({ where: { schoolId, isDeleted: false } }),
       prisma.class.count({ where: { schoolId, isActive: true } }),
       prisma.event.count({ where: { schoolId, isActive: true } }),
       prisma.book.count({ where: { schoolId, isActive: true } }),
-      prisma.fee.aggregate({
+      prisma.fee.findMany({
         where: { schoolId },
-        _sum: { amount: true, amountPaid: true },
+        select: {
+          amount: true,
+          amountPaid: true,
+        },
       }),
     ]);
 
-    const totalFees = feeStats._sum.amount ?? 0;
-    const collectedFees = feeStats._sum.amountPaid ?? 0;
+    let totalFeesMoney = moneyFrom(null, 0);
+    let collectedFeesMoney = moneyFrom(null, 0);
+
+    for (const feeRow of feeRows) {
+      totalFeesMoney = totalFeesMoney.plus(moneyFrom(feeRow.amount));
+      collectedFeesMoney = collectedFeesMoney.plus(
+        moneyFrom(feeRow.amountPaid)
+      );
+    }
+
+    const totalFees = moneyToNumber(totalFeesMoney);
+    const collectedFees = moneyToNumber(collectedFeesMoney);
+    const pendingFees = moneyToNumber(totalFeesMoney.minus(collectedFeesMoney));
 
     const payload = {
       totalStudents,
@@ -50,7 +68,7 @@ export async function getDashboardStats(schoolId: string): Promise<DashboardStat
       totalBooks,
       totalFees,
       collectedFees,
-      pendingFees: totalFees - collectedFees,
+      pendingFees,
     };
     ok = true;
     return payload;
@@ -64,6 +82,8 @@ export async function getDashboardStats(schoolId: string): Promise<DashboardStat
  * Recent activity feed — last N audit log entries for a school.
  */
 export async function getRecentActivity(schoolId: string, limit = 20) {
+  assertSchoolScope(schoolId);
+
   const started = process.hrtime.bigint();
   let ok = false;
   try {
@@ -84,7 +104,10 @@ export async function getRecentActivity(schoolId: string, limit = 20) {
  * Upcoming events for a school (next 30 days).
  */
 export async function getUpcomingEvents(schoolId: string, limit = 5) {
-  const today = new Date().toISOString().split("T")[0];
+  assertSchoolScope(schoolId);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const started = process.hrtime.bigint();
   let ok = false;
   try {

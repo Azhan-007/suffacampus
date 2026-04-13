@@ -27,17 +27,17 @@ import { writeAuditLog } from "../../services/audit.service";
 
 const cancelSubscriptionSchema = z.object({
   reason: z.string().max(500).optional(),
-});
+}).strict();
 
 const changePlanSchema = z.object({
   newPlan: z.enum(["free", "basic", "pro", "enterprise"]),
   billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
-});
+}).strict();
 
 const previewPlanSchema = z.object({
   newPlan: z.enum(["free", "basic", "pro", "enterprise"]),
   billingCycle: z.enum(["monthly", "yearly"]).default("monthly"),
-});
+}).strict();
 
 // ---------------------------------------------------------------------------
 // Route plugin

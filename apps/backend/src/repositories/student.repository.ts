@@ -5,6 +5,7 @@
 
 import type { Student, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { Errors } from "../errors";
 import {
   BaseRepository,
   type PaginationParams,
@@ -37,10 +38,24 @@ export class StudentRepository extends BaseRepository<Student> {
     delete (data as any).id;
     delete (data as any).schoolId;
 
-    return prisma.student.update({
-      where: { id },
+    const result = await prisma.student.updateMany({
+      where: { id, schoolId },
       data: data as any,
     });
+
+    if (result.count === 0) {
+      throw Errors.notFound("Student", id);
+    }
+
+    const updated = await prisma.student.findFirst({
+      where: { id, schoolId },
+    });
+
+    if (!updated) {
+      throw Errors.notFound("Student", id);
+    }
+
+    return updated;
   }
 
   /**
@@ -148,13 +163,17 @@ export class StudentRepository extends BaseRepository<Student> {
    * Soft delete student
    */
   async softDelete(schoolId: string, id: string, deletedBy: string): Promise<void> {
-    await prisma.student.update({
-      where: { id },
+    const result = await prisma.student.updateMany({
+      where: { id, schoolId },
       data: {
         isDeleted: true,
         deletedAt: new Date(),
         deletedBy,
       },
     });
+
+    if (result.count === 0) {
+      throw Errors.notFound("Student", id);
+    }
   }
 }

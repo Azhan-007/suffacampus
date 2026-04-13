@@ -4,16 +4,16 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - "apps/educonnect-webpanel/**"
+      - "apps/suffacampus-webpanel/**"
       - ".github/workflows/webpanel-ci.yml"
   pull_request:
     branches: [main, develop]
     paths:
-      - "apps/educonnect-webpanel/**"
+      - "apps/suffacampus-webpanel/**"
 
 defaults:
   run:
-    working-directory: apps/educonnect-webpanel
+    working-directory: apps/suffacampus-webpanel
 
 jobs:
   # ── Lint & Typecheck ─────────────────────────────────────────────────────
@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: apps/educonnect-webpanel/package-lock.json
+          cache-dependency-path: apps/suffacampus-webpanel/package-lock.json
 
       - run: npm ci
 
@@ -49,7 +49,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: apps/educonnect-webpanel/package-lock.json
+          cache-dependency-path: apps/suffacampus-webpanel/package-lock.json
 
       - run: npm ci
 
@@ -70,14 +70,14 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: apps/educonnect-webpanel/package-lock.json
+          cache-dependency-path: apps/suffacampus-webpanel/package-lock.json
 
       - run: npm ci
 
       - name: Next.js build
         run: npx next build
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:5000/api/v1
+          NEXT_PUBLIC_API_URL: https://suffacampus-backend-k8ox.onrender.com/api/v1
 
   # ── Deploy to Vercel (main only) ─────────────────────────────────────────
   deploy:
@@ -97,7 +97,7 @@ jobs:
       #     vercel-token: ${{ secrets.VERCEL_TOKEN }}
       #     vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
       #     vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-      #     working-directory: apps/educonnect-webpanel
+      #     working-directory: apps/suffacampus-webpanel
 
       - name: Placeholder — Vercel deployment not yet configured
         run: echo "✅ Build passed. Connect Vercel project to enable auto-deploy."

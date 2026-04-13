@@ -71,7 +71,12 @@ export default function LoginPage() {
       setUser(user);
 
       // Set auth cookie BEFORE navigation so Next.js middleware allows the route
-      document.cookie = `SuffaCampus-token=1; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
+      const secureSuffix =
+        typeof window !== 'undefined' && window.location.protocol === 'https:'
+          ? '; Secure'
+          : '';
+      document.cookie = `SuffaCampus-token=1; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax${secureSuffix}`;
+      document.cookie = `SuffaCampus-role=${encodeURIComponent(user.role)}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax${secureSuffix}`;
       console.log('[Login] Cookie set, navigating...');
 
       toast.success(`Welcome back, ${user.displayName}!`);

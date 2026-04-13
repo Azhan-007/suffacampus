@@ -17,7 +17,11 @@ import { tenantGuard } from "../../middleware/tenant";
 import { requirePermission } from "../../middleware/permission";
 import { sendSuccess, sendPaginated } from "../../utils/response";
 import { Errors } from "../../errors";
-import { writeAuditLog } from "../../services/audit.service";
+import {
+  formatMoneyInr,
+  moneyFrom,
+  moneyFromInput,
+} from "../../utils/safe-fields";
 
 const preHandler = [authenticate, tenantGuard];
 
@@ -25,17 +29,17 @@ const createFeeStructureSchema = z.object({
   name: z.string().min(1, "name is required").trim(),
   amount: z.number().positive("amount must be greater than 0"),
   classId: z.string().min(1, "classId is required"),
-});
+}).strict();
 
 const assignFeeSchema = z.object({
   studentId: z.string().min(1, "studentId is required"),
   feeStructureId: z.string().min(1, "feeStructureId is required"),
-});
+}).strict();
 
 const payFeeSchema = z.object({
   studentFeeId: z.string().min(1, "studentFeeId is required"),
   amount: z.number().positive("amount must be greater than 0"),
-});
+}).strict();
 
 export default async function feeRoutes(server: FastifyInstance) {
   // GET /admin/fee-templates
@@ -84,11 +88,13 @@ export default async function feeRoutes(server: FastifyInstance) {
         throw Errors.badRequest("classId does not belong to this school");
       }
 
+      const amountDecimal = moneyFromInput(result.data.amount);
+
       const created = await prisma.feeStructure.create({
         data: {
           schoolId: request.schoolId,
           name: result.data.name,
-          amount: result.data.amount,
+          amount: amountDecimal,
           classId: result.data.classId,
         },
       });
@@ -129,10 +135,12 @@ export default async function feeRoutes(server: FastifyInstance) {
         throw Errors.badRequest("classId does not belong to this school");
       }
 
+      const amountDecimal = moneyFromInput(result.data.amount);
+
       const feeStructure = await prisma.feeStructure.create({
         data: {
           name: result.data.name,
-          amount: result.data.amount,
+          amount: amountDecimal,
           classId: result.data.classId,
           schoolId,
         },
@@ -187,12 +195,15 @@ export default async function feeRoutes(server: FastifyInstance) {
         throw Errors.tenantMismatch();
       }
 
+      const totalAmountDecimal = moneyFrom(feeStructure.amount);
+
       const studentFee = await prisma.studentFee.create({
         data: {
           studentId: result.data.studentId,
           feeStructureId: result.data.feeStructureId,
           schoolId,
-          totalAmount: feeStructure.amount,
+          totalAmount: totalAmountDecimal,
+          paidAmount: moneyFrom(0),
         },
       });
 
@@ -257,16 +268,19 @@ export default async function feeRoutes(server: FastifyInstance) {
         throw Errors.tenantMismatch();
       }
 
-      const nextPaidAmount = studentFee.paidAmount + result.data.amount;
+      const paymentAmountDecimal = moneyFromInput(result.data.amount);
+      const totalAmountDecimal = moneyFrom(studentFee.totalAmount);
+      const paidAmountDecimal = moneyFrom(studentFee.paidAmount);
+      const nextPaidAmountDecimal = paidAmountDecimal.plus(paymentAmountDecimal);
 
-      if (nextPaidAmount > studentFee.totalAmount) {
+      if (nextPaidAmountDecimal.greaterThan(totalAmountDecimal)) {
         throw Errors.badRequest("Payment exceeds total fee amount");
       }
 
       let nextStatus: "PENDING" | "PARTIAL" | "PAID" = "PENDING";
-      if (nextPaidAmount === studentFee.totalAmount) {
+      if (nextPaidAmountDecimal.equals(totalAmountDecimal)) {
         nextStatus = "PAID";
-      } else if (nextPaidAmount > 0) {
+      } else if (nextPaidAmountDecimal.greaterThan(moneyFrom(null, 0))) {
         nextStatus = "PARTIAL";
       }
 
@@ -274,7 +288,7 @@ export default async function feeRoutes(server: FastifyInstance) {
         const createdPayment = await tx.payment.create({
           data: {
             studentFeeId: studentFee.id,
-            amount: result.data.amount,
+            amount: paymentAmountDecimal,
             paidAt: new Date(),
             schoolId,
           },
@@ -295,7 +309,7 @@ export default async function feeRoutes(server: FastifyInstance) {
         const updated = await tx.studentFee.update({
           where: { id: studentFee.id },
           data: {
-            paidAmount: nextPaidAmount,
+            paidAmount: nextPaidAmountDecimal,
             status: nextStatus,
           },
         });
@@ -316,7 +330,7 @@ export default async function feeRoutes(server: FastifyInstance) {
 
         if (parents.length > 0) {
           const studentName = `${student.firstName} ${student.lastName}`.trim() || "student";
-          const message = `Payment of ₹${payment.amount} received for ${studentName}`;
+          const message = `Payment of ₹${formatMoneyInr(payment.amount)} received for ${studentName}`;
           const actorRole = request.user.role ?? "Staff";
 
           for (const parent of parents) {
@@ -377,14 +391,9 @@ export default async function feeRoutes(server: FastifyInstance) {
       const result = createFeeSchema.safeParse(request.body);
       if (!result.success) throw Errors.validation(result.error.flatten().fieldErrors);
 
-      const fee = await createFee(request.schoolId, result.data, request.user.uid);
-
-      await writeAuditLog("FEE_CREATED", request.user.uid, request.schoolId, {
-        feeId: fee.id,
-        studentId: fee.studentId,
-        amount: fee.amount,
-        dueDate: fee.dueDate,
-        status: fee.status,
+      const fee = await createFee(request.schoolId, result.data, request.user.uid, {
+        role: request.user.role,
+        schoolId: request.schoolId,
       });
 
       return sendSuccess(request, reply, fee, 201);
@@ -444,12 +453,16 @@ export default async function feeRoutes(server: FastifyInstance) {
       if (!result.success) throw Errors.validation(result.error.flatten().fieldErrors);
       if (Object.keys(result.data).length === 0) throw Errors.badRequest("No fields to update");
 
-      const fee = await updateFee(request.params.id, request.schoolId, result.data, request.user.uid);
-
-      await writeAuditLog("FEE_UPDATED", request.user.uid, request.schoolId, {
-        feeId: request.params.id,
-        updatedFields: Object.keys(result.data),
-      });
+      const fee = await updateFee(
+        request.params.id,
+        request.schoolId,
+        result.data,
+        request.user.uid,
+        {
+          role: request.user.role,
+          schoolId: request.schoolId,
+        }
+      );
 
       return sendSuccess(request, reply, fee);
     }
@@ -465,12 +478,16 @@ export default async function feeRoutes(server: FastifyInstance) {
       ],
     },
     async (request, reply) => {
-      const deleted = await softDeleteFee(request.params.id, request.schoolId, request.user.uid);
+      const deleted = await softDeleteFee(
+        request.params.id,
+        request.schoolId,
+        request.user.uid,
+        {
+          role: request.user.role,
+          schoolId: request.schoolId,
+        }
+      );
       if (!deleted) throw Errors.notFound("Fee", request.params.id);
-
-      await writeAuditLog("FEE_DELETED", request.user.uid, request.schoolId, {
-        feeId: request.params.id,
-      });
 
       return sendSuccess(request, reply, { message: "Fee deleted" });
     }

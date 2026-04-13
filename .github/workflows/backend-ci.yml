@@ -107,7 +107,7 @@ jobs:
       # - name: Deploy to Cloud Run
       #   uses: google-github-actions/deploy-cloudrun@v2
       #   with:
-      #     service: educonnect-api
+      #     service: suffacampus-api
       #     region: asia-south1
       #     source: apps/backend
       #     env_vars: |

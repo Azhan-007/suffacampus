@@ -231,7 +231,7 @@ describe("previewPlanChange", () => {
 
   it("shows limit violations when usage exceeds target plan", async () => {
     seedSchool("s1", "pro");
-    seedUsage("s1", 300, 25, 5); // 300 students > basic's 200
+    seedUsage("s1", 600, 25, 5); // 600 students > basic's 500
 
     const preview = await previewPlanChange("s1", "basic");
 
@@ -239,8 +239,8 @@ describe("previewPlanChange", () => {
     expect(preview.canProceed).toBe(false);
     expect(preview.limitViolations.length).toBeGreaterThan(0);
     expect(preview.limitViolations[0].resource).toBe("students");
-    expect(preview.limitViolations[0].current).toBe(300);
-    expect(preview.limitViolations[0].newLimit).toBe(200);
+    expect(preview.limitViolations[0].current).toBe(600);
+    expect(preview.limitViolations[0].newLimit).toBe(500);
   });
 
   it("shows multiple limit violations", async () => {
@@ -316,7 +316,7 @@ describe("executePlanChange", () => {
 
   it("rejects downgrade when usage exceeds limits", async () => {
     seedSchool("s1", "pro");
-    seedUsage("s1", 300, 25, 5); // 300 students > basic's 200
+    seedUsage("s1", 600, 25, 5); // 600 students > basic's 500
 
     await expect(
       executePlanChange("s1", "basic", "monthly", "user1")

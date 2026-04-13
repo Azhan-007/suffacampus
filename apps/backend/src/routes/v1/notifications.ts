@@ -30,11 +30,11 @@ const notificationIdParamsSchema = z.object({
 
 const registerPushTokenBodySchema = z.object({
   token: z.string().min(1, "Token is required"),
-});
+}).strict();
 
 const unregisterPushTokenBodySchema = z.object({
   token: z.string().min(1, "Token is required"),
-});
+}).strict();
 
 type CreateNotificationBody = z.infer<typeof createNotificationSchema>;
 type ListNotificationsQuery = z.infer<typeof listNotificationsQuerySchema>;

@@ -1,8 +1,20 @@
 // Run this script to add username field to existing test users
 // Usage: node scripts/addUsernames.js
 
+require('dotenv').config();
 const admin = require('firebase-admin');
 const serviceAccount = require('../path-to-your-serviceAccountKey.json');
+
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value.trim();
+}
+
+const TEACHER_EMAIL = requireEnv('TEST_TEACHER_EMAIL');
+const STUDENT_EMAIL = requireEnv('TEST_STUDENT_EMAIL');
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -14,7 +26,7 @@ async function addUsernames() {
   try {
     // Update teacher user
     const teacherQuery = await db.collection('users')
-      .where('email', '==', 'teacher@test.com')
+      .where('email', '==', TEACHER_EMAIL)
       .get();
     
     if (!teacherQuery.empty) {
@@ -26,7 +38,7 @@ async function addUsernames() {
 
     // Update student user
     const studentQuery = await db.collection('users')
-      .where('email', '==', 'student@test.com')
+      .where('email', '==', STUDENT_EMAIL)
       .get();
     
     if (!studentQuery.empty) {

@@ -8,6 +8,8 @@ import { auth } from "../lib/firebase-admin";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
 import crypto from "node:crypto";
+import { moneyFrom, moneyToNumber } from "../utils/safe-fields";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -34,6 +36,8 @@ export async function createParentInvite(
   studentId: string,
   createdBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const student = await prisma.student.findUnique({ where: { id: studentId } });
   if (!student) throw Errors.notFound("Student", studentId);
   if (student.schoolId !== schoolId) throw Errors.tenantMismatch();
@@ -145,14 +149,15 @@ export async function getChildrenSummaries(
   schoolId: string,
   studentIds: string[]
 ): Promise<ChildSummary[]> {
+  assertSchoolScope(schoolId);
+
   if (studentIds.length === 0) return [];
 
   const students = await prisma.student.findMany({
     where: { id: { in: studentIds }, schoolId },
   });
 
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString().split("T")[0];
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   const summaries: ChildSummary[] = [];
 
@@ -176,14 +181,19 @@ export async function getChildrenSummaries(
       totalAttendance > 0 ? Math.round((presentCount / totalAttendance) * 100) : null;
 
     // Pending fees
-    const pendingFees = await prisma.fee.aggregate({
+    const pendingFeeRows = await prisma.fee.findMany({
       where: {
         schoolId,
         studentId: s.id,
         status: { in: ["Pending", "Overdue"] },
       },
-      _sum: { amount: true },
+      select: { amount: true },
     });
+
+    let pendingFeesMoney = moneyFrom(null, 0);
+    for (const feeRow of pendingFeeRows) {
+      pendingFeesMoney = pendingFeesMoney.plus(moneyFrom(feeRow.amount));
+    }
 
     // Last exam result
     const lastResult = await prisma.result.findFirst({
@@ -199,7 +209,7 @@ export async function getChildrenSummaries(
       rollNumber: s.rollNumber ?? "",
       photoURL: s.photoURL,
       attendanceRate,
-      pendingFees: pendingFees._sum.amount ?? 0,
+      pendingFees: moneyToNumber(pendingFeesMoney),
       lastExamScore: lastResult
         ? `${lastResult.marksObtained}/${lastResult.totalMarks}`
         : null,
@@ -214,6 +224,8 @@ export async function getStudentAttendanceForParent(
   studentId: string,
   pagination: { limit?: number; cursor?: string }
 ) {
+  assertSchoolScope(schoolId);
+
   const limit = Math.min(pagination.limit ?? 20, 100);
 
   const records = await prisma.attendance.findMany({
@@ -237,6 +249,8 @@ export async function getStudentFeesForParent(
   studentId: string,
   pagination: { limit?: number; cursor?: string }
 ) {
+  assertSchoolScope(schoolId);
+
   const limit = Math.min(pagination.limit ?? 20, 100);
 
   const fees = await prisma.fee.findMany({
@@ -260,6 +274,8 @@ export async function getStudentResultsForParent(
   studentId: string,
   pagination: { limit?: number; cursor?: string }
 ) {
+  assertSchoolScope(schoolId);
+
   const limit = Math.min(pagination.limit ?? 20, 100);
 
   const results = await prisma.result.findMany({
@@ -282,6 +298,8 @@ export async function getSchoolEventsForParent(
   schoolId: string,
   pagination: { limit?: number; cursor?: string }
 ) {
+  assertSchoolScope(schoolId);
+
   const today = new Date().toISOString().split("T")[0];
   const limit = Math.min(pagination.limit ?? 20, 100);
 

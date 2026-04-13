@@ -54,11 +54,32 @@ jest.mock("../../src/lib/prisma", () => ({
         mockState.attendance.set(id, row);
         return row;
       }),
+      createMany: jest.fn(async ({ data }) => {
+        let count = 0;
+        for (const rowData of data as Array<Record<string, unknown>>) {
+          const id = `att_${mockState.attendanceCounter++}`;
+          const row = { id, createdAt: new Date(), updatedAt: new Date(), ...rowData };
+          mockState.attendance.set(id, row);
+          count += 1;
+        }
+        return { count };
+      }),
       findMany: jest.fn(async ({ where, orderBy }) => {
         let rows = [...mockState.attendance.values()].filter((a) => {
           if (where?.schoolId && a.schoolId !== where.schoolId) return false;
-          if (where?.studentId && a.studentId !== where.studentId) return false;
-          if (where?.date && a.date !== where.date) return false;
+          if (where?.studentId && typeof where.studentId === "string" && a.studentId !== where.studentId) return false;
+          if (where?.studentId?.in && Array.isArray(where.studentId.in) && !where.studentId.in.includes(a.studentId)) return false;
+          if (where?.date) {
+            if (where.date instanceof Date) {
+              if (new Date(a.date).getTime() !== where.date.getTime()) return false;
+            } else if (typeof where.date === "object") {
+              const recordDate = new Date(a.date);
+              if (where.date.gte && recordDate < new Date(where.date.gte)) return false;
+              if (where.date.lte && recordDate > new Date(where.date.lte)) return false;
+            } else if (a.date !== where.date) {
+              return false;
+            }
+          }
           if (where?.classId && a.classId !== where.classId) return false;
           if (where?.sectionId && a.sectionId !== where.sectionId) return false;
           if (where?.status?.in && Array.isArray(where.status.in) && !where.status.in.includes(a.status)) return false;
@@ -75,6 +96,30 @@ jest.mock("../../src/lib/prisma", () => ({
           return lhs < rhs ? 1 : -1;
         });
         return rows;
+      }),
+      groupBy: jest.fn(async ({ where }) => {
+        const rows = [...mockState.attendance.values()].filter((a) => {
+          if (where?.schoolId && a.schoolId !== where.schoolId) return false;
+          if (where?.classId && a.classId !== where.classId) return false;
+          if (where?.sectionId && a.sectionId !== where.sectionId) return false;
+          if (where?.date) {
+            const recordDate = new Date(a.date);
+            if (where.date.gte && recordDate < new Date(where.date.gte)) return false;
+            if (where.date.lte && recordDate > new Date(where.date.lte)) return false;
+          }
+          return true;
+        });
+
+        const counts = new Map<string, number>();
+        for (const row of rows) {
+          const status = String(row.status);
+          counts.set(status, (counts.get(status) ?? 0) + 1);
+        }
+
+        return [...counts.entries()].map(([status, count]) => ({
+          status,
+          _count: { _all: count },
+        }));
       }),
       update: jest.fn(async ({ where: { id }, data }) => {
         const existing = mockState.attendance.get(id);
@@ -378,9 +423,17 @@ describe("GET /attendance", () => {
     expect(body.data.length).toBe(2);
   });
 
-  it("returns 400 when date query param is missing", async () => {
+  it("returns recent attendance records when date query param is missing", async () => {
     setupAuthUser("Staff");
     seedSchool();
+
+    seedPrismaAttendance("att_recent_1", {
+      studentId: "stu_1",
+      schoolId: "school_1",
+      date: "2025-03-15",
+      status: "Present",
+      studentName: "Recent",
+    });
 
     const res = await server.inject({
       method: "GET",
@@ -388,7 +441,10 @@ describe("GET /attendance", () => {
       headers: { authorization: "Bearer token" },
     });
 
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(body.data.length).toBe(1);
   });
 
   it("returns 400 for invalid date format", async () => {
@@ -471,6 +527,14 @@ describe("POST /attendance/bulk", () => {
       date: todayIsoDate(),
       status: "Present",
     });
+    seedPrismaAttendance("att_existing", {
+      studentId: "stu_1",
+      schoolId: "school_1",
+      date: todayIsoDate(),
+      status: "Present",
+      classId: "10",
+      sectionId: "A",
+    });
 
     const res = await server.inject({
       method: "POST",
@@ -543,17 +607,41 @@ describe("GET /attendance/stats", () => {
       date: "2025-03-15",
       status: "Present",
     });
+    seedPrismaAttendance("att_1", {
+      schoolId: "school_1",
+      studentId: "stu_1",
+      date: "2025-03-15",
+      status: "Present",
+      classId: "10",
+      sectionId: "A",
+    });
     seedDoc("attendance", "att_2", {
       schoolId: "school_1",
       studentId: "stu_2",
       date: "2025-03-15",
       status: "Absent",
     });
+    seedPrismaAttendance("att_2", {
+      schoolId: "school_1",
+      studentId: "stu_2",
+      date: "2025-03-15",
+      status: "Absent",
+      classId: "10",
+      sectionId: "A",
+    });
     seedDoc("attendance", "att_3", {
       schoolId: "school_1",
       studentId: "stu_3",
       date: "2025-03-15",
       status: "Late",
+    });
+    seedPrismaAttendance("att_3", {
+      schoolId: "school_1",
+      studentId: "stu_3",
+      date: "2025-03-15",
+      status: "Late",
+      classId: "10",
+      sectionId: "A",
     });
 
     const res = await server.inject({
@@ -598,11 +686,27 @@ describe("GET /attendance/stats", () => {
       date: "2025-03-15",
       status: "Present",
     });
+    seedPrismaAttendance("att_10", {
+      schoolId: "school_1",
+      classId: "10",
+      date: "2025-03-15",
+      status: "Present",
+      studentId: "stu_10",
+      sectionId: "A",
+    });
     seedDoc("attendance", "att_9", {
       schoolId: "school_1",
       classId: "9",
       date: "2025-03-15",
       status: "Present",
+    });
+    seedPrismaAttendance("att_9", {
+      schoolId: "school_1",
+      classId: "9",
+      date: "2025-03-15",
+      status: "Present",
+      studentId: "stu_9",
+      sectionId: "A",
     });
 
     const res = await server.inject({
@@ -625,10 +729,26 @@ describe("GET /attendance/stats", () => {
       date: "2025-03-15",
       status: "Present",
     });
+    seedPrismaAttendance("att_mine", {
+      schoolId: "school_1",
+      date: "2025-03-15",
+      status: "Present",
+      studentId: "stu_mine",
+      classId: "10",
+      sectionId: "A",
+    });
     seedDoc("attendance", "att_other", {
       schoolId: "school_2",
       date: "2025-03-15",
       status: "Present",
+    });
+    seedPrismaAttendance("att_other", {
+      schoolId: "school_2",
+      date: "2025-03-15",
+      status: "Present",
+      studentId: "stu_other",
+      classId: "10",
+      sectionId: "A",
     });
 
     const res = await server.inject({

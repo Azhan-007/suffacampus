@@ -28,14 +28,14 @@ export type StudentFilter = z.input<typeof studentFilterSchema>;
 export type TeacherFilter = z.input<typeof teacherFilterSchema>;
 
 // ---------------------------------------------------------------------------
-// In-memory name search helper (Firestore lacks native full-text search)
+// In-memory name search helper
 // ---------------------------------------------------------------------------
 
 /**
  * Filter an array of documents by a search string, matching against
  * first name and last name (case-insensitive contains).
  *
- * This runs AFTER Firestore returns results, so it works with pagination.
+ * This runs after the initial datastore query, so it works with pagination.
  * For truly large collections, consider Algolia / Typesense integration.
  */
 export function filterByName<T extends { firstName?: string; lastName?: string; name?: string }>(

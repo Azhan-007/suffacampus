@@ -5,6 +5,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { Errors } from "../errors";
 
 export interface PaginationParams {
   limit?: number;
@@ -156,15 +157,20 @@ export abstract class BaseRepository<T extends { id: string; schoolId: string }>
    */
   async delete(schoolId: string, id: string, soft = true): Promise<void> {
     const model = prisma[this.modelName] as any;
+    const existing = await this.findById(schoolId, id);
 
-    if (soft && "isDeleted" in (await this.findById(schoolId, id))!) {
-      await model.update({
-        where: { id },
+    if (!existing) {
+      throw Errors.notFound(String(this.modelName), id);
+    }
+
+    if (soft && "isDeleted" in (existing as Record<string, unknown>)) {
+      await model.updateMany({
+        where: { id, schoolId },
         data: { isDeleted: true, deletedAt: new Date() },
       });
     } else {
-      await model.delete({
-        where: { id },
+      await model.deleteMany({
+        where: { id, schoolId },
       });
     }
   }

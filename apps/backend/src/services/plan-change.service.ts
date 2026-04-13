@@ -8,6 +8,7 @@ import { createOrder } from "./payment.service";
 import { createCreditNote } from "./invoice.service";
 import { writeAuditLog } from "./audit.service";
 import { createNotification } from "./notification.service";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export interface PlanDefinition {
   name: string;
@@ -19,9 +20,9 @@ export interface PlanDefinition {
 }
 
 export const PLAN_CATALOG: Record<string, PlanDefinition> = {
-  free: { name: "free", displayName: "Free", monthlyPricePaise: 0, yearlyPricePaise: 0, limits: { maxStudents: 50, maxTeachers: 5, maxClasses: 5, storageGB: 1 }, features: ["students", "teachers", "attendance", "classes"] },
-  basic: { name: "basic", displayName: "Basic", monthlyPricePaise: 99900, yearlyPricePaise: 999900, limits: { maxStudents: 200, maxTeachers: 20, maxClasses: 20, storageGB: 10 }, features: ["students", "teachers", "attendance", "classes", "events", "fees", "results", "branding", "export_csv"] },
-  pro: { name: "pro", displayName: "Pro", monthlyPricePaise: 249900, yearlyPricePaise: 2499900, limits: { maxStudents: 1000, maxTeachers: 100, maxClasses: 50, storageGB: 50 }, features: ["students", "teachers", "attendance", "classes", "events", "fees", "results", "branding", "export_csv", "library", "timetable", "reports", "bulk_operations", "export_pdf"] },
+  free: { name: "free", displayName: "Free", monthlyPricePaise: 0, yearlyPricePaise: 0, limits: { maxStudents: 200, maxTeachers: 20, maxClasses: 10, storageGB: 1 }, features: ["students", "teachers", "attendance", "classes"] },
+  basic: { name: "basic", displayName: "Basic", monthlyPricePaise: 99900, yearlyPricePaise: 999900, limits: { maxStudents: 500, maxTeachers: 50, maxClasses: 25, storageGB: 10 }, features: ["students", "teachers", "attendance", "classes", "events", "fees", "results", "branding", "export_csv"] },
+  pro: { name: "pro", displayName: "Pro", monthlyPricePaise: 249900, yearlyPricePaise: 2499900, limits: { maxStudents: 2000, maxTeachers: 200, maxClasses: 100, storageGB: 50 }, features: ["students", "teachers", "attendance", "classes", "events", "fees", "results", "branding", "export_csv", "library", "timetable", "reports", "bulk_operations", "export_pdf"] },
   enterprise: { name: "enterprise", displayName: "Enterprise", monthlyPricePaise: 499900, yearlyPricePaise: 4999900, limits: { maxStudents: -1, maxTeachers: -1, maxClasses: -1, storageGB: 500 }, features: ["students", "teachers", "attendance", "classes", "events", "fees", "results", "branding", "export_csv", "library", "timetable", "reports", "bulk_operations", "export_pdf", "api_access", "audit_logs", "webhooks", "priority_support"] },
 };
 
@@ -34,6 +35,8 @@ export interface UsageSnapshot { students: number; teachers: number; classes: nu
 export interface LimitViolation { resource: string; current: number; newLimit: number; }
 
 async function getCurrentUsage(schoolId: string): Promise<UsageSnapshot> {
+  assertSchoolScope(schoolId);
+
   const [students, teachers, classes] = await Promise.all([
     prisma.student.count({ where: { schoolId, isDeleted: false } }),
     prisma.teacher.count({ where: { schoolId, isDeleted: false } }),
@@ -51,6 +54,8 @@ function checkLimitViolations(usage: UsageSnapshot, plan: PlanDefinition): Limit
 }
 
 async function resolveNotificationContext(schoolId: string, userId: string) {
+  assertSchoolScope(schoolId);
+
   const userDelegate = (prisma as unknown as {
     user?: {
       findFirst?: (args: {
@@ -107,6 +112,8 @@ export interface PlanChangePreview {
 }
 
 export async function previewPlanChange(schoolId: string, newPlanName: string, billingCycle: "monthly" | "yearly" = "monthly"): Promise<PlanChangePreview> {
+  assertSchoolScope(schoolId);
+
   const school = await prisma.school.findUnique({ where: { id: schoolId } });
   if (!school) throw new Error("School not found");
 
@@ -154,6 +161,8 @@ export interface PlanChangeResult {
 }
 
 export async function executePlanChange(schoolId: string, newPlanName: string, billingCycle: "monthly" | "yearly" = "monthly", performedBy: string): Promise<PlanChangeResult> {
+  assertSchoolScope(schoolId);
+
   const preview = await previewPlanChange(schoolId, newPlanName, billingCycle);
   if (!preview.canProceed) throw new Error(preview.message);
   if (!preview.isUpgrade && !preview.isDowngrade) throw new Error(preview.message);
@@ -211,7 +220,16 @@ export async function executePlanChange(schoolId: string, newPlanName: string, b
     return { type: "upgrade", newPlan: newPlanName.toLowerCase(), billingCycle, effectiveDate: preview.effectiveDate, creditNoteId, message: `Upgraded to ${newPlan.displayName}. Credit covered full cost.` };
   }
 
-  const order = await createOrder({ amount: chargePaise, currency: "INR", schoolId, plan: newPlanName, durationDays });
+  const order = await createOrder({
+    amount: chargePaise,
+    currency: "INR",
+    schoolId,
+    plan: newPlanName,
+    durationDays,
+    billingCycle,
+    initiatedBy: performedBy,
+    description: `Plan upgrade to ${newPlan.displayName}`,
+  });
   await writeAuditLog("PLAN_UPGRADE_INITIATED", performedBy, schoolId, { from: preview.currentPlan, to: newPlanName.toLowerCase(), razorpayOrderId: order.id, amount: chargePaise });
   return { type: "upgrade", newPlan: newPlanName.toLowerCase(), billingCycle, effectiveDate: preview.effectiveDate, order: { id: order.id, amount: chargePaise, currency: "INR" }, creditNoteId, message: preview.message };
 }

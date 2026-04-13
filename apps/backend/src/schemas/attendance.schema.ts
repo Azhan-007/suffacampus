@@ -13,6 +13,6 @@ export const markAttendanceSchema = z.object({
   sectionId: z.string().min(1, "Section ID is required"),
   studentName: z.string().optional(),
   remarks: z.string().optional(),
-});
+}).strict();
 
 export type MarkAttendanceInput = z.infer<typeof markAttendanceSchema>;

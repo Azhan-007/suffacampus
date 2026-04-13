@@ -5,6 +5,7 @@
 
 import type { Attendance, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { Errors } from "../errors";
 import {
   BaseRepository,
   type PaginationParams,
@@ -36,10 +37,24 @@ export class AttendanceRepository extends BaseRepository<Attendance> {
     delete (data as any).id;
     delete (data as any).schoolId;
 
-    return prisma.attendance.update({
-      where: { id },
+    const result = await prisma.attendance.updateMany({
+      where: { id, schoolId },
       data: data as any,
     });
+
+    if (result.count === 0) {
+      throw Errors.notFound("Attendance", id);
+    }
+
+    const updated = await prisma.attendance.findFirst({
+      where: { id, schoolId },
+    });
+
+    if (!updated) {
+      throw Errors.notFound("Attendance", id);
+    }
+
+    return updated;
   }
 
   /**

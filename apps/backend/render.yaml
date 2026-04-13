@@ -10,8 +10,14 @@
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: "5000"
+      - key: RUN_WORKERS
+        value: "true"
+      - key: NOTIFICATION_WORKER_MODE
+        value: in-process
+      - key: FRONTEND_URL
+        value: https://suffacampus.netlify.app
+      - key: CORS_ORIGINS
+        value: https://suffacampus.netlify.app
       - key: DATABASE_URL
         sync: false  # PostgreSQL connection string
       - key: FIREBASE_PROJECT_ID
@@ -21,8 +27,6 @@
       - key: FIREBASE_PRIVATE_KEY
         sync: false
       - key: FIREBASE_STORAGE_BUCKET
-        sync: false
-      - key: CORS_ORIGINS
         sync: false
       - key: LOG_LEVEL
         value: info

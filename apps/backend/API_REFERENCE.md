@@ -356,13 +356,71 @@ Current usage vs plan limits (students, teachers, classes).
 
 Create a Razorpay order.
 
+Server computes and enforces amount from `plan` + `billingCycle`; frontend amount is never trusted.
+
+Headers:
+- `Idempotency-Key: <unique-request-key>` (recommended)
+
 ```json
 {
-  "amount": 49900,
-  "plan": "Standard",
+  "plan": "pro",
+  "billingCycle": "monthly",
   "durationDays": 30
 }
 ```
+
+Example success response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "order": {
+      "id": "order_Q2k...",
+      "amount": 249900,
+      "currency": "INR",
+      "receipt": "rcpt_school_..."
+    },
+    "id": "order_Q2k...",
+    "amount": 249900,
+    "currency": "INR",
+    "receipt": "rcpt_school_..."
+  }
+}
+```
+
+### `POST /api/v1/payments/verify`
+
+Verify Razorpay payment signature server-side, fetch payment from gateway, and persist transaction idempotently.
+
+```json
+{
+  "razorpay_order_id": "order_Q2k...",
+  "razorpay_payment_id": "pay_Q2m...",
+  "razorpay_signature": "f77a..."
+}
+```
+
+Example success response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "verified": true,
+    "duplicate": false,
+    "paymentId": "pay_Q2m...",
+    "orderId": "order_Q2k..."
+  }
+}
+```
+
+### `POST /webhooks/razorpay`
+
+Public Razorpay webhook endpoint.
+- Signature header required: `x-razorpay-signature`
+- Event handled: `payment.captured`
+- Processing is idempotent (duplicate capture events are safely ignored)
 
 ---
 
@@ -482,6 +540,12 @@ Upload a file. Categories: `photos`, `documents`, `reports`, `receipts`, `import
 
 Size limits: photos 5MB, documents/reports 25MB, receipts 10MB, imports 50MB.
 
+Successful response:
+
+```json
+{ "url": "https://storage.googleapis.com/<bucket>/<schoolId>/photos/<generated-file>" }
+```
+
 ### `GET /api/v1/uploads/:category`
 
 List files in a category.
@@ -557,7 +621,7 @@ Deep readiness check â€” validates Firestore connectivity, system metrics.
 
 In-process request metrics (counts, latencies, error rates per route).
 
-**Auth:** `Authorization: Bearer <METRICS_AUTH_TOKEN>` (if METRICS_AUTH_TOKEN env is set).
+**Auth:** `Authorization: Bearer <METRICS_AUTH_TOKEN>` (required).
 
 ---
 

@@ -5,7 +5,7 @@ export const classAssignmentSchema = z.object({
   sectionId: z.string().min(1),
   className: z.string().optional(),
   sectionName: z.string().optional(),
-});
+}).strict();
 
 export type ClassAssignment = z.infer<typeof classAssignmentSchema>;
 
@@ -24,6 +24,6 @@ export const createTeacherSchema = z.object({
   photoURL: z.string().min(1).optional(),
   joiningDate: z.string().trim().optional(),
   isActive: z.boolean().default(true),
-});
+}).strict();
 
 export type CreateTeacherInput = z.infer<typeof createTeacherSchema>;

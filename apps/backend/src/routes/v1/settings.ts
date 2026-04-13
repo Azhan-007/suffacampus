@@ -10,6 +10,11 @@ import { roleMiddleware } from "../../middleware/role";
 import { ROLES, ROLE_PERMISSIONS } from "../../services/permission.service";
 import { sendSuccess } from "../../utils/response";
 import { Errors } from "../../errors";
+import {
+  listActiveSessionsForUser,
+  revokeAllSessionsForUser,
+  revokeSessionById,
+} from "../../services/session.service";
 
 const preHandler = [authenticate, tenantGuard];
 
@@ -56,31 +61,66 @@ export default async function settingsRoutes(server: FastifyInstance) {
   );
 
   // GET /settings/sessions — active sessions for current user
-  server.get(
+  server.get<{ Querystring: { limit?: string } }>(
     "/settings/sessions",
     { preHandler },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const sessions = [
-        {
-          id: request.user.uid,
-          userId: request.user.uid,
-          current: true,
-          ipAddress: "unknown",
-          userAgent: "unknown",
-          createdAt: request.user.createdAt ?? new Date().toISOString(),
-          lastActiveAt: request.user.lastLogin ?? new Date().toISOString(),
-        },
-      ];
+    async (request, reply) => {
+      const parsedLimit = z
+        .coerce
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(50)
+        .safeParse(request.query.limit);
 
-      return sendSuccess(request, reply, sessions);
+      if (!parsedLimit.success) {
+        throw Errors.validation(parsedLimit.error.flatten().fieldErrors);
+      }
+
+      const sessions = await listActiveSessionsForUser(
+        request.user.uid,
+        request.schoolId,
+        parsedLimit.data
+      );
+
+      const currentSessionId =
+        request.session?.source === "session-jwt"
+          ? request.session.id
+          : null;
+
+      const payload = sessions.map((session) => ({
+        id: session.id,
+        userUid: session.userUid,
+        schoolId: session.schoolId,
+        current: currentSessionId === session.id,
+        device: session.device,
+        ipAddress: session.ipAddress,
+        userAgent: session.userAgent,
+        lastActiveAt: session.lastActiveAt,
+        expiresAt: session.expiresAt,
+      }));
+
+      return sendSuccess(request, reply, payload);
     }
   );
 
-  // DELETE /settings/sessions/:sessionId — best-effort revoke (Firebase token revocation is global per uid)
+  // DELETE /settings/sessions/:sessionId — revoke a specific persisted session
   server.delete<{ Params: { sessionId: string } }>(
     "/settings/sessions/:sessionId",
     { preHandler },
     async (request, reply) => {
+      const revoked = await revokeSessionById({
+        sessionId: request.params.sessionId,
+        userUid: request.user.uid,
+        schoolId: request.schoolId,
+        reason: "manual_session_revoke",
+      });
+
+      if (!revoked) {
+        throw Errors.notFound("Session", request.params.sessionId);
+      }
+
       return sendSuccess(request, reply, {
         revoked: true,
         sessionId: request.params.sessionId,
@@ -93,7 +133,23 @@ export default async function settingsRoutes(server: FastifyInstance) {
     "/settings/sessions/revoke-others",
     { preHandler },
     async (request, reply) => {
-      return sendSuccess(request, reply, { revoked: true });
+      const currentSessionId =
+        request.session?.source === "session-jwt"
+          ? request.session.id
+          : undefined;
+
+      const result = await revokeAllSessionsForUser({
+        userUid: request.user.uid,
+        schoolId: request.schoolId,
+        excludeSessionId: currentSessionId,
+        reason: "revoke_other_sessions",
+      });
+
+      return sendSuccess(request, reply, {
+        revoked: true,
+        revokedCount: result.revokedCount,
+        keptSessionId: currentSessionId ?? null,
+      });
     }
   );
 
@@ -121,7 +177,7 @@ export default async function settingsRoutes(server: FastifyInstance) {
 
   const updatePermissionsSchema = z.object({
     permissions: z.array(z.string().min(1)).default([]),
-  });
+  }).strict();
 
   // PUT /settings/permissions/:role
   server.put<{ Params: { role: string } }>(

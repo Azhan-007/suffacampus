@@ -2,13 +2,10 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/store/authStore';
 import toast from 'react-hot-toast';
+import { PUBLIC_API_URL } from '@/lib/runtime-config';
+import { clearSessionAccessToken, getSessionAccessToken } from '@/lib/session-token';
 
-const BASE_URL = (() => {
-  const url = process.env.NEXT_PUBLIC_API_URL;
-  if (url) return url;
-  if (process.env.NODE_ENV === 'development') return 'http://localhost:5000/api/v1';
-  throw new Error('NEXT_PUBLIC_API_URL is not set. Configure it for production builds.');
-})();
+const BASE_URL = PUBLIC_API_URL;
 
 // ─── Retry configuration ──────────────────────────────────────────────────────
 const MAX_RETRIES = 3;
@@ -17,6 +14,12 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 /** Status codes that should trigger a retry. */
 const RETRYABLE_STATUS = new Set([408, 502, 503, 504]);
+
+type AuthMode = 'session' | 'firebase' | 'none' | 'auto';
+
+export interface ApiFetchOptions extends RequestInit {
+  authMode?: AuthMode;
+}
 
 /**
  * Sleep helper for retry backoff.
@@ -40,6 +43,29 @@ function waitForAuthReady(): Promise<void> {
 
 const authReady = waitForAuthReady();
 
+async function resolveAuthToken(authMode: AuthMode): Promise<string | null> {
+  if (authMode === 'none') {
+    return null;
+  }
+
+  if (authMode === 'session') {
+    return getSessionAccessToken();
+  }
+
+  await authReady;
+
+  if (authMode === 'firebase') {
+    return (await auth.currentUser?.getIdToken()) ?? null;
+  }
+
+  const sessionToken = getSessionAccessToken();
+  if (sessionToken) {
+    return sessionToken;
+  }
+
+  return (await auth.currentUser?.getIdToken()) ?? null;
+}
+
 /**
  * Typed API error — carries the HTTP status and machine-readable code.
  */
@@ -56,7 +82,7 @@ export class ApiError extends Error {
 
 /**
  * Thin fetch wrapper that:
- * 1. Attaches the current Firebase ID token as a Bearer header (if signed in)
+ * 1. Attaches backend session JWT by default (or Firebase token when requested)
  * 2. Defaults Content-Type to application/json
  * 3. Retries transient failures (5xx, network errors) with exponential backoff
  * 4. Aborts after REQUEST_TIMEOUT_MS (default 30 s)
@@ -65,10 +91,10 @@ export class ApiError extends Error {
  */
 export async function apiFetch<T = unknown>(
   path: string,
-  options: RequestInit = {}
+  options: ApiFetchOptions = {}
 ): Promise<T> {
-  await authReady; // wait for Firebase to restore session before reading currentUser
-  const token = await auth.currentUser?.getIdToken();
+  const { authMode = 'auto', ...fetchOptions } = options;
+  const token = await resolveAuthToken(authMode);
   const { user, currentSchool } = useAuthStore.getState();
   const schoolHeader: Record<string, string> = {};
   if (user?.role === 'SuperAdmin' && currentSchool?.id) {
@@ -78,8 +104,8 @@ export async function apiFetch<T = unknown>(
   const headers: Record<string, string> = {
     // Only set Content-Type for requests with a body (Fastify 5 rejects
     // Content-Type: application/json when the body is empty)
-    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-    ...(options.headers as Record<string, string> | undefined),
+    ...(fetchOptions.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(fetchOptions.headers as Record<string, string> | undefined),
     ...schoolHeader,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
@@ -97,9 +123,9 @@ export async function apiFetch<T = unknown>(
 
     try {
       const res = await fetch(`${BASE_URL}${path}`, {
-        ...options,
+        ...fetchOptions,
         headers,
-        signal: options.signal ?? controller.signal,
+        signal: fetchOptions.signal ?? controller.signal,
       });
 
       clearTimeout(timeoutId);
@@ -115,6 +141,13 @@ export async function apiFetch<T = unknown>(
           `Request failed with status ${res.status}`;
         const code = errorObj?.code ?? 'UNKNOWN_ERROR';
         const details = errorObj?.details;
+
+        if (
+          res.status === 401 &&
+          (code === 'AUTH_TOKEN_INVALID' || code === 'AUTH_TOKEN_MISSING')
+        ) {
+          clearSessionAccessToken();
+        }
 
         // Surface rate-limit errors to the user immediately
         if (res.status === 429) {
@@ -225,15 +258,15 @@ function toQueryString(params: PaginationParams): string {
 export async function apiFetchPaginated<T>(
   path: string,
   params: PaginationParams = {},
-  options: RequestInit = {}
+  options: ApiFetchOptions = {}
 ): Promise<PaginatedResponse<T>> {
-  await authReady;
-  const token = await auth.currentUser?.getIdToken();
+  const { authMode = 'auto', ...fetchOptions } = options;
+  const token = await resolveAuthToken(authMode);
 
   const headers: Record<string, string> = {
     // Only set Content-Type for requests with a body
-    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-    ...(options.headers as Record<string, string> | undefined),
+    ...(fetchOptions.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(fetchOptions.headers as Record<string, string> | undefined),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
@@ -250,9 +283,9 @@ export async function apiFetchPaginated<T>(
 
     try {
       const res = await fetch(url, {
-        ...options,
+        ...fetchOptions,
         headers,
-        signal: options.signal ?? controller.signal,
+        signal: fetchOptions.signal ?? controller.signal,
       });
 
       clearTimeout(timeoutId);
@@ -266,6 +299,13 @@ export async function apiFetchPaginated<T>(
           (envelope?.message as string) ??
           `Request failed with status ${res.status}`;
         const code = errorObj?.code ?? 'UNKNOWN_ERROR';
+
+        if (
+          res.status === 401 &&
+          (code === 'AUTH_TOKEN_INVALID' || code === 'AUTH_TOKEN_MISSING')
+        ) {
+          clearSessionAccessToken();
+        }
 
         if (res.status === 429) {
           const retryAfter = res.headers.get('Retry-After');

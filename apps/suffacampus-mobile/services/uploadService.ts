@@ -2,7 +2,7 @@
  * uploadService.ts
  *
  * Backend routes:
- *   POST /uploads   — multipart file upload, returns { fileUrl: string }
+ *   POST /uploads/:category — multipart file upload, returns { url: string }
  *
  * Replaces firebase/storage usage.
  */
@@ -13,8 +13,7 @@ import { BASE_URL, fetchWithTimeout } from "./api";
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface UploadResult {
-  fileUrl: string;
-  fileName: string;
+  url: string;
 }
 
 // ─── Functions ───────────────────────────────────────────────────────────────
@@ -37,7 +36,6 @@ export async function uploadFile(
 
   const formData = new FormData();
   (formData as any).append("file", { uri, name, type: mimeType } as any);
-  (formData as any).append("fileName", name);
 
   const response = await fetchWithTimeout(`${BASE_URL}/uploads/documents`, {
     method: "POST",
@@ -59,7 +57,24 @@ export async function uploadFile(
     throw new Error(message);
   }
 
-  const body = await response.json();
-  const result = (body?.data ?? body) as UploadResult;
-  return result;
+  const body = (await response.json()) as {
+    url?: string;
+    fileUrl?: string;
+    data?: {
+      url?: string;
+      fileUrl?: string;
+    };
+  };
+
+  const url =
+    body.url ??
+    body.data?.url ??
+    body.fileUrl ??
+    body.data?.fileUrl;
+
+  if (!url) {
+    throw new Error("Upload succeeded but no URL was returned by the server");
+  }
+
+  return { url };
 }

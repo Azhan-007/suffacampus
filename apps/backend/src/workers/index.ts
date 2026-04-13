@@ -1,5 +1,4 @@
 import cron, { type ScheduledTask } from "node-cron";
-import pino from "pino";
 import {
   processExpiredTrials,
   processOverdueSubscriptions,
@@ -13,8 +12,10 @@ import {
   usageLimitWarningEmail,
 } from "../services/email-templates";
 import { enqueueEmail, initEmailQueue, shutdownEmailQueue } from "../services/email-queue.service";
+import { createLogger } from "../utils/logger";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
-const log = pino({ name: "workers" });
+const log = createLogger("workers");
 
 /**
  * Background workers that run on a schedule.
@@ -176,17 +177,20 @@ async function captureUsageSnapshots(): Promise<void> {
   const snapshotDate = new Date();
   snapshotDate.setUTCHours(0, 0, 0, 0);
 
-  // Re-run safe: overwrite the daily snapshot set.
-  await prisma.usageRecord.deleteMany({
-    where: {
-      date: snapshotDate,
-      period: "daily",
-    },
-  });
-
   let count = 0;
 
   for (const school of activeSchools) {
+    assertSchoolScope(school.id);
+
+    // Re-run safe per tenant: overwrite only this school's daily snapshot.
+    await prisma.usageRecord.deleteMany({
+      where: {
+        schoolId: school.id,
+        date: snapshotDate,
+        period: "daily",
+      },
+    });
+
     const [studentCount, teacherCount, classCount] = await Promise.all([
       prisma.student.count({
         where: { schoolId: school.id, isDeleted: false },
@@ -303,6 +307,8 @@ async function sendUsageLimitWarnings(): Promise<void> {
   let sent = 0;
 
   for (const school of schools) {
+    assertSchoolScope(school.id);
+
     const schoolName = school.name ?? "School";
     const adminEmail = school.email;
 

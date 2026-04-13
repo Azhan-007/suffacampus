@@ -5,6 +5,8 @@
 
 import { prisma } from "../lib/prisma";
 import { sendEmail } from "./notification.service";
+import { dateOnlyStringFrom, dateTimeFrom, moneyFrom, moneyToNumber } from "../utils/safe-fields";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export type ReportType =
   | "attendance_weekly"
@@ -34,6 +36,14 @@ export interface ReportResult {
 
 export async function generateReport(config: ReportConfig): Promise<ReportResult> {
   const { schoolId, type, startDate, endDate, filters } = config;
+  assertSchoolScope(schoolId);
+
+  const startDateDt = dateTimeFrom(startDate);
+  const endDateDt = dateTimeFrom(endDate);
+
+  if (!startDateDt || !endDateDt) {
+    throw new Error("Invalid startDate or endDate");
+  }
 
   let html: string;
   let stats: Record<string, unknown>;
@@ -61,8 +71,8 @@ export async function generateReport(config: ReportConfig): Promise<ReportResult
     data: {
       schoolId,
       type,
-      startDate,
-      endDate,
+      startDate: startDateDt,
+      endDate: endDateDt,
       filters: filters ? (filters as any) : undefined,
       stats: stats ? (stats as any) : undefined,
       requestedBy: config.requestedBy,
@@ -114,7 +124,19 @@ async function generateAttendanceReport(
   endDate: string,
   filters?: Record<string, string>
 ): Promise<{ html: string; stats: Record<string, unknown> }> {
-  const where: any = { schoolId, date: { gte: startDate, lte: endDate } };
+  assertSchoolScope(schoolId);
+
+  const startDateDt = dateTimeFrom(startDate);
+  const endDateDt = dateTimeFrom(endDate);
+
+  if (!startDateDt || !endDateDt) {
+    throw new Error("Invalid attendance report date range");
+  }
+
+  const endOfDay = new Date(endDateDt);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  const where: any = { schoolId, date: { gte: startDateDt, lte: endOfDay } };
   if (filters?.classId) where.classId = filters.classId;
 
   const records = await prisma.attendance.findMany({ where }) as any[];
@@ -127,8 +149,9 @@ async function generateAttendanceReport(
 
   const byDate = new Map<string, { present: number; absent: number; late: number; total: number }>();
   for (const r of records) {
-    if (!byDate.has(r.date)) byDate.set(r.date, { present: 0, absent: 0, late: 0, total: 0 });
-    const d = byDate.get(r.date)!;
+    const dateKey = dateOnlyStringFrom(r.date);
+    if (!byDate.has(dateKey)) byDate.set(dateKey, { present: 0, absent: 0, late: 0, total: 0 });
+    const d = byDate.get(dateKey)!;
     d.total++;
     if (r.status === "Present") d.present++;
     else if (r.status === "Absent") d.absent++;
@@ -164,18 +187,64 @@ async function generateAttendanceReport(
 async function generateFeeReport(
   schoolId: string, _startDate: string, _endDate: string, _filters?: Record<string, string>
 ): Promise<{ html: string; stats: Record<string, unknown> }> {
-  const records = await prisma.fee.findMany({ where: { schoolId } }) as any[];
+  assertSchoolScope(schoolId);
+
+  const records = await prisma.fee.findMany({
+    where: { schoolId },
+    select: {
+      status: true,
+      amount: true,
+      amountPaid: true,
+    },
+  });
 
   const totalFees = records.length;
-  const totalAmount = records.reduce((sum, r) => sum + r.amount, 0);
-  const paidFees = records.filter((r) => r.status === "Paid");
-  const pendingFees = records.filter((r) => r.status === "Pending");
-  const overdueFees = records.filter((r) => r.status === "Overdue");
-  const collectedAmount = paidFees.reduce((sum, r) => sum + r.amount, 0);
-  const pendingAmount = pendingFees.reduce((sum, r) => sum + r.amount, 0);
+  let totalAmountMoney = moneyFrom(null, 0);
+  let collectedAmountMoney = moneyFrom(null, 0);
+  let pendingAmountMoney = moneyFrom(null, 0);
+  let paidCount = 0;
+  let pendingCount = 0;
+  let overdueCount = 0;
+
+  for (const record of records) {
+    const totalMoney = moneyFrom(record.amount);
+    totalAmountMoney = totalAmountMoney.plus(totalMoney);
+
+    if (record.status === "Paid") {
+      paidCount += 1;
+      collectedAmountMoney = collectedAmountMoney.plus(totalMoney);
+    } else if (record.status === "Partial") {
+      collectedAmountMoney = collectedAmountMoney.plus(
+        moneyFrom(record.amountPaid)
+      );
+    }
+
+    if (record.status === "Pending") {
+      pendingCount += 1;
+      pendingAmountMoney = pendingAmountMoney.plus(totalMoney);
+    }
+
+    if (record.status === "Overdue") {
+      overdueCount += 1;
+      pendingAmountMoney = pendingAmountMoney.plus(totalMoney);
+    }
+  }
+
+  const totalAmount = moneyToNumber(totalAmountMoney);
+  const collectedAmount = moneyToNumber(collectedAmountMoney);
+  const pendingAmount = moneyToNumber(pendingAmountMoney);
   const collectionRate = totalAmount > 0 ? ((collectedAmount / totalAmount) * 100).toFixed(1) : "0";
 
-  const stats = { totalFees, totalAmount, collectedAmount, pendingAmount, collectionRate: `${collectionRate}%`, paidCount: paidFees.length, pendingCount: pendingFees.length, overdueCount: overdueFees.length };
+  const stats = {
+    totalFees,
+    totalAmount,
+    collectedAmount,
+    pendingAmount,
+    collectionRate: `${collectionRate}%`,
+    paidCount,
+    pendingCount,
+    overdueCount,
+  };
 
   const html = `
     <div class="report-stats">
@@ -193,6 +262,8 @@ async function generateFeeReport(
 async function generatePerformanceReport(
   schoolId: string, _startDate: string, _endDate: string, filters?: Record<string, string>
 ): Promise<{ html: string; stats: Record<string, unknown> }> {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId, isActive: true };
   if (filters?.classId) where.classId = filters.classId;
   if (filters?.examType) where.examType = filters.examType;
@@ -230,6 +301,8 @@ async function generatePerformanceReport(
 async function generateClassAnalytics(
   schoolId: string, _startDate: string, _endDate: string, _filters?: Record<string, string>
 ): Promise<{ html: string; stats: Record<string, unknown> }> {
+  assertSchoolScope(schoolId);
+
   const [classes, studentCounts] = await Promise.all([
     prisma.class.findMany({ where: { schoolId, isActive: true }, include: { sections: true } }) as any,
     prisma.student.groupBy({ by: ["classId"], where: { schoolId, isDeleted: false }, _count: true }) as any,

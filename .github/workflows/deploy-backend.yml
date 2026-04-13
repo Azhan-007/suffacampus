@@ -57,7 +57,7 @@ jobs:
         if: vars.DEPLOY_TARGET == 'cloud-run'
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: educonnect-api
+          service: suffacampus-api
           region: ${{ vars.GCP_REGION || 'asia-south1' }}
           source: apps/backend
           env_vars: |
@@ -71,4 +71,4 @@ jobs:
         uses: bervProject/railway-deploy@main
         with:
           railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: educonnect-backend
+          service: suffacampus-backend

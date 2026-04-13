@@ -8,6 +8,7 @@
 
 import { prisma } from "../lib/prisma";
 import { Client as ElasticClient } from "@elastic/elasticsearch";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 export type SearchableEntity = "students" | "teachers" | "library";
 
@@ -87,6 +88,8 @@ function toElasticDocument(result: SearchResult & { schoolId: string }): Record<
 
 async function searchWithPostgres(options: SearchOptions): Promise<SearchResult[]> {
   const { schoolId, query, entities, limit } = options;
+  assertSchoolScope(schoolId);
+
   const searchEntities = entities ?? ["students", "teachers", "library"];
   const results: SearchResult[] = [];
 
@@ -197,6 +200,8 @@ async function searchWithElasticsearch(options: SearchOptions): Promise<SearchRe
   }
 
   const { schoolId, query, entities, limit } = options;
+  assertSchoolScope(schoolId);
+
   const entityFilter = entities && entities.length > 0 ? entities : undefined;
 
   const response = await client.search({
@@ -249,6 +254,7 @@ async function searchWithElasticsearch(options: SearchOptions): Promise<SearchRe
  */
 export async function search(options: SearchOptions): Promise<SearchResult[]> {
   const { schoolId, query: rawQuery, entities, limit = 20 } = options;
+  assertSchoolScope(schoolId);
 
   const query = rawQuery.trim();
   if (!query || query.length < 1) return [];
@@ -284,6 +290,8 @@ export async function reindexEntity(
   entity: SearchableEntity,
   schoolId: string
 ): Promise<number> {
+  assertSchoolScope(schoolId);
+
   const client = getElasticClient();
   if (!client) {
     return 0;

@@ -13,6 +13,10 @@ import {
 } from "../__mocks__/firebase-admin";
 import { AppError } from "../../src/errors";
 
+jest.mock("../../src/services/session.service", () => ({
+  validateSessionAccessToken: jest.fn().mockResolvedValue(null),
+}));
+
 jest.mock("../../src/services/audit.service", () => ({
   writeAuditLog: jest.fn().mockResolvedValue(undefined),
 }));
@@ -24,7 +28,22 @@ jest.mock("../../src/services/payment.service", () => ({
     currency: "INR",
     receipt: "rcpt_mock",
   }),
+  normalizePlanCode: jest.fn((plan: string) => plan.trim().toLowerCase()),
+  resolveSubscriptionAmountPaise: jest.fn(() => 50000),
+  verifyPaymentAndPersist: jest.fn().mockResolvedValue({
+    verified: true,
+    duplicate: false,
+    paymentId: "pay_mock_123",
+    orderId: "order_mock_123",
+  }),
 }));
+
+const paymentServiceMock = jest.requireMock("../../src/services/payment.service") as {
+  createOrder: jest.Mock;
+  normalizePlanCode: jest.Mock;
+  resolveSubscriptionAmountPaise: jest.Mock;
+  verifyPaymentAndPersist: jest.Mock;
+};
 
 jest.mock("../../src/lib/prisma", () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -104,6 +123,13 @@ beforeEach(async () => {
   });
   await server.register(paymentRoutes, { prefix: "/" });
   await server.ready();
+
+  paymentServiceMock.verifyPaymentAndPersist.mockResolvedValue({
+    verified: true,
+    duplicate: false,
+    paymentId: "pay_mock_123",
+    orderId: "order_mock_123",
+  });
 });
 
 afterEach(async () => { await server.close(); });
@@ -127,7 +153,7 @@ describe("POST /payments/create-order", () => {
     expect(body.data.order.amount).toBe(50000);
   });
 
-  it("returns 400 for missing amount", async () => {
+  it("accepts missing amount (server computes amount)", async () => {
     setupAuthUser();
     seedSchool();
     const res = await server.inject({
@@ -135,16 +161,16 @@ describe("POST /payments/create-order", () => {
       headers: { authorization: "Bearer token" },
       payload: { plan: "pro" },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(201);
   });
 
-  it("returns 400 for negative amount", async () => {
+  it("returns 400 when amount mismatches server-computed amount", async () => {
     setupAuthUser();
     seedSchool();
     const res = await server.inject({
       method: "POST", url: "/payments/create-order",
       headers: { authorization: "Bearer token" },
-      payload: { amount: -100, plan: "pro" },
+      payload: { amount: 49999, plan: "pro" },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -177,5 +203,63 @@ describe("POST /payments/create-order", () => {
       payload: { amount: 50000, plan: "pro" },
     });
     expect(res.statusCode).toBe(403);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /payments/verify
+// ---------------------------------------------------------------------------
+describe("POST /payments/verify", () => {
+  it("verifies payment and returns verification payload", async () => {
+    setupAuthUser();
+    seedSchool();
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/payments/verify",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        razorpay_payment_id: "pay_123",
+        razorpay_order_id: "order_123",
+        razorpay_signature: "sig_123",
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(body.data.verified).toBe(true);
+    expect(body.data.paymentId).toBe("pay_mock_123");
+    expect(paymentServiceMock.verifyPaymentAndPersist).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 400 for malformed verify payload", async () => {
+    setupAuthUser();
+    seedSchool();
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/payments/verify",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        razorpay_payment_id: "",
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("returns 401 when unauthenticated", async () => {
+    const res = await server.inject({
+      method: "POST",
+      url: "/payments/verify",
+      payload: {
+        razorpay_payment_id: "pay_123",
+        razorpay_order_id: "order_123",
+        razorpay_signature: "sig_123",
+      },
+    });
+
+    expect(res.statusCode).toBe(401);
   });
 });

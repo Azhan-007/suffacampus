@@ -24,6 +24,8 @@ type TestUser = {
   role: string;
   schoolId: string;
   isActive: boolean;
+  studentId?: string;
+  teacherId?: string;
   studentIds: string[];
   createdAt: Date;
   updatedAt: Date;
@@ -119,6 +121,10 @@ const mockState = {
   users: new Map<string, TestUser>(),
   schools: new Map<string, Record<string, unknown>>(),
   subscriptions: new Map<string, Record<string, unknown>>(),
+  sessions: new Map<string, Record<string, unknown>>(),
+  revokedTokens: new Map<string, Record<string, unknown>>(),
+  teachers: new Map<string, Record<string, unknown>>(),
+  teacherAssignments: new Map<string, Record<string, unknown>>(),
   students: new Map<string, TestStudent>(),
   attendance: new Map<string, TestAttendance>(),
   results: new Map<string, TestResult>(),
@@ -131,6 +137,7 @@ const mockState = {
     invite: 1,
     fee: 1,
     event: 1,
+    session: 1,
   },
 };
 
@@ -382,6 +389,52 @@ jest.mock("../../src/lib/prisma", () => ({
         mockState.results.set(id, updated);
         return updated;
       }),
+      updateMany: jest.fn(async ({ where, data }) => {
+        let count = 0;
+        for (const [id, row] of mockState.results.entries()) {
+          if (where?.schoolId && row.schoolId !== where.schoolId) continue;
+          if (where?.teacherId && row.teacherId !== where.teacherId) continue;
+          if (typeof where?.published !== "undefined" && row.published !== where.published) continue;
+          if (typeof where?.isActive !== "undefined" && row.isActive !== where.isActive) continue;
+          if (Array.isArray(where?.OR) && where.OR.length > 0) {
+            const inScope = where.OR.some(
+              (scope: { classId?: string; sectionId?: string }) =>
+                row.classId === scope.classId && row.sectionId === scope.sectionId
+            );
+            if (!inScope) continue;
+          }
+          mockState.results.set(id, { ...row, ...data, updatedAt: new Date() });
+          count += 1;
+        }
+        return { count };
+      }),
+    },
+    teacher: {
+      findUnique: jest.fn(async ({ where: { id }, select }) => {
+        const row = mockState.teachers.get(id) ?? null;
+        if (!row) return null;
+        if (!select) return row;
+        const selected: Record<string, unknown> = {};
+        for (const key of Object.keys(select)) {
+          if (select[key]) selected[key] = row[key];
+        }
+        return selected;
+      }),
+    },
+    teacherClassAssignment: {
+      findMany: jest.fn(async ({ where, select }) => {
+        const rows = [...mockState.teacherAssignments.values()].filter((row) => {
+          if (where?.teacherId && row.teacherId !== where.teacherId) return false;
+          if (where?.teacher?.schoolId && row.schoolId !== where.teacher.schoolId) return false;
+          return true;
+        });
+
+        if (!select) return rows;
+        return rows.map((row) => ({
+          classId: row.classId,
+          sectionId: row.sectionId,
+        }));
+      }),
     },
     parentInvite: {
       create: jest.fn(async ({ data }) => {
@@ -465,6 +518,128 @@ jest.mock("../../src/lib/prisma", () => ({
         return rows;
       }),
     },
+    session: {
+      count: jest.fn(async ({ where }) =>
+        [...mockState.sessions.values()].filter((session) => {
+          if (where?.userUid && session.userUid !== where.userUid) return false;
+          if (where?.schoolId && session.schoolId !== where.schoolId) return false;
+          if (typeof where?.revokedAt !== "undefined" && session.revokedAt !== where.revokedAt) return false;
+          if (where?.expiresAt?.gt && new Date(session.expiresAt as string) <= where.expiresAt.gt) return false;
+          return true;
+        }).length
+      ),
+      findMany: jest.fn(async ({ where, orderBy, take, select }) => {
+        let rows = [...mockState.sessions.values()].filter((session) => {
+          if (where?.id?.in && Array.isArray(where.id.in) && !where.id.in.includes(session.id)) return false;
+          if (where?.userUid && session.userUid !== where.userUid) return false;
+          if (where?.schoolId && session.schoolId !== where.schoolId) return false;
+          if (typeof where?.revokedAt !== "undefined" && session.revokedAt !== where.revokedAt) return false;
+          if (where?.expiresAt?.gt && new Date(session.expiresAt as string) <= where.expiresAt.gt) return false;
+          return true;
+        });
+
+        const sortBy = Object.keys(orderBy ?? {})[0] ?? "lastActiveAt";
+        const sortOrder = (orderBy?.[sortBy] ?? "desc") as "asc" | "desc";
+        rows = rows.sort((a, b) => {
+          const lhs = a[sortBy as keyof typeof a] as any;
+          const rhs = b[sortBy as keyof typeof b] as any;
+          if (lhs === rhs) return 0;
+          if (sortOrder === "asc") return lhs > rhs ? 1 : -1;
+          return lhs < rhs ? 1 : -1;
+        });
+
+        if (typeof take === "number") rows = rows.slice(0, take);
+
+        if (!select) return rows;
+        return rows.map((row) => {
+          const selected: Record<string, unknown> = {};
+          for (const key of Object.keys(select)) {
+            if (select[key]) selected[key] = row[key as keyof typeof row];
+          }
+          return selected;
+        });
+      }),
+      findFirst: jest.fn(async ({ where }) => {
+        return (
+          [...mockState.sessions.values()].find((session) => {
+            if (where?.id && session.id !== where.id) return false;
+            if (where?.userUid && session.userUid !== where.userUid) return false;
+            if (where?.schoolId && session.schoolId !== where.schoolId) return false;
+            if (typeof where?.revokedAt !== "undefined" && session.revokedAt !== where.revokedAt) return false;
+            if (where?.expiresAt?.gt && new Date(session.expiresAt as string) <= where.expiresAt.gt) return false;
+            return true;
+          }) ?? null
+        );
+      }),
+      create: jest.fn(async ({ data }) => {
+        const id = `sess_${mockState.counters.session++}`;
+        const row = {
+          id,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...data,
+        };
+        mockState.sessions.set(id, row);
+        return row;
+      }),
+      update: jest.fn(async ({ where: { id }, data }) => {
+        const existing = mockState.sessions.get(id);
+        if (!existing) throw new Error("Session not found");
+        const updated = { ...existing, ...data, updatedAt: new Date() };
+        mockState.sessions.set(id, updated);
+        return updated;
+      }),
+      updateMany: jest.fn(async ({ where, data }) => {
+        let count = 0;
+        for (const [id, row] of mockState.sessions.entries()) {
+          if (where?.id?.in && Array.isArray(where.id.in) && !where.id.in.includes(id)) continue;
+          if (where?.userUid && row.userUid !== where.userUid) continue;
+          if (where?.schoolId && row.schoolId !== where.schoolId) continue;
+          mockState.sessions.set(id, { ...row, ...data, updatedAt: new Date() });
+          count += 1;
+        }
+        return { count };
+      }),
+      deleteMany: jest.fn(async ({ where }) => {
+        let count = 0;
+        for (const [id, row] of mockState.sessions.entries()) {
+          if (where?.expiresAt?.lt && new Date(row.expiresAt as string) >= where.expiresAt.lt) continue;
+          mockState.sessions.delete(id);
+          count += 1;
+        }
+        return { count };
+      }),
+    },
+    revokedToken: {
+      findUnique: jest.fn(async ({ where: { jti } }) => mockState.revokedTokens.get(jti) ?? null),
+      createMany: jest.fn(async ({ data, skipDuplicates }) => {
+        let count = 0;
+        for (const row of data as Array<Record<string, unknown>>) {
+          const jti = String(row.jti);
+          if (skipDuplicates && mockState.revokedTokens.has(jti)) {
+            continue;
+          }
+          mockState.revokedTokens.set(jti, row);
+          count += 1;
+        }
+        return { count };
+      }),
+      upsert: jest.fn(async ({ where: { jti }, create, update }) => {
+        const existing = mockState.revokedTokens.get(jti);
+        const row = existing ? { ...existing, ...update } : create;
+        mockState.revokedTokens.set(jti, row);
+        return row;
+      }),
+      deleteMany: jest.fn(async ({ where }) => {
+        let count = 0;
+        for (const [jti, row] of mockState.revokedTokens.entries()) {
+          if (where?.expiresAt?.lt && new Date(String(row.expiresAt)) >= where.expiresAt.lt) continue;
+          mockState.revokedTokens.delete(jti);
+          count += 1;
+        }
+        return { count };
+      }),
+    },
     $transaction: jest.fn(async (arg: unknown) => {
       if (typeof arg === "function") {
         const tx = {
@@ -525,6 +700,57 @@ jest.mock("../../src/lib/prisma", () => ({
               return row;
             },
           },
+          schoolConfig: {
+            create: async ({ data }: { data: Record<string, unknown> }) => ({
+              id: `cfg_${Date.now()}`,
+              ...data,
+            }),
+          },
+          session: {
+            deleteMany: async ({ where }: { where: Record<string, unknown> }) => {
+              let count = 0;
+              for (const [id, row] of mockState.sessions.entries()) {
+                if (where?.expiresAt && (where.expiresAt as any).lt) {
+                  if (new Date(String(row.expiresAt)) >= (where.expiresAt as any).lt) continue;
+                }
+                mockState.sessions.delete(id);
+                count += 1;
+              }
+              return { count };
+            },
+            updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+              let count = 0;
+              for (const [id, row] of mockState.sessions.entries()) {
+                if ((where.id as any)?.in && !(where.id as any).in.includes(id)) continue;
+                mockState.sessions.set(id, { ...row, ...data, updatedAt: new Date() });
+                count += 1;
+              }
+              return { count };
+            },
+          },
+          revokedToken: {
+            deleteMany: async ({ where }: { where: Record<string, unknown> }) => {
+              let count = 0;
+              for (const [jti, row] of mockState.revokedTokens.entries()) {
+                if (where?.expiresAt && (where.expiresAt as any).lt) {
+                  if (new Date(String(row.expiresAt)) >= (where.expiresAt as any).lt) continue;
+                }
+                mockState.revokedTokens.delete(jti);
+                count += 1;
+              }
+              return { count };
+            },
+            createMany: async ({ data, skipDuplicates }: { data: Array<Record<string, unknown>>; skipDuplicates?: boolean }) => {
+              let count = 0;
+              for (const row of data) {
+                const jti = String(row.jti);
+                if (skipDuplicates && mockState.revokedTokens.has(jti)) continue;
+                mockState.revokedTokens.set(jti, row);
+                count += 1;
+              }
+              return { count };
+            },
+          },
         };
 
         return (arg as (input: typeof tx) => Promise<unknown>)(tx);
@@ -564,10 +790,13 @@ describe("E2E: Auth Smoke Flows", () => {
       id: `usr_${uid}`,
       uid,
       email: (extra.email as string) ?? `${uid}@school.test`,
+      username: typeof extra.username === "string" ? extra.username : undefined,
       displayName: (extra.displayName as string) ?? uid,
       role,
       schoolId,
       isActive: true,
+      studentId: typeof extra.studentId === "string" ? extra.studentId : undefined,
+      teacherId: typeof extra.teacherId === "string" ? extra.teacherId : undefined,
       studentIds: (extra.studentIds as string[]) ?? [],
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -588,6 +817,10 @@ describe("E2E: Auth Smoke Flows", () => {
     mockState.users.clear();
     mockState.schools.clear();
     mockState.subscriptions.clear();
+    mockState.sessions.clear();
+    mockState.revokedTokens.clear();
+    mockState.teachers.clear();
+    mockState.teacherAssignments.clear();
     mockState.students.clear();
     mockState.attendance.clear();
     mockState.results.clear();
@@ -599,6 +832,7 @@ describe("E2E: Auth Smoke Flows", () => {
     mockState.counters.invite = 1;
     mockState.counters.fee = 1;
     mockState.counters.event = 1;
+    mockState.counters.session = 1;
 
     mockVerifyIdToken.mockReset();
     mockGetUserByEmail.mockReset();
@@ -618,14 +852,11 @@ describe("E2E: Auth Smoke Flows", () => {
   });
 
   it("resolves user by username", async () => {
-    seedDoc("users", "u1", {
-      uid: "u1",
+    seedAuthUser("u1", "Student", "school_1", {
       username: "alice",
       email: "alice@school.test",
-      role: "Student",
       displayName: "Alice",
       studentId: "stu_1",
-      schoolId: "school_1",
     });
 
     const res = await request(app.server)
@@ -644,6 +875,7 @@ describe("E2E: Auth Smoke Flows", () => {
       name: "Alpha School",
       code: "ALPHA123",
       primaryColor: "#1a73e8",
+      isActive: true,
     });
 
     const res = await request(app.server)
@@ -1119,27 +1351,72 @@ describe("E2E: Auth Smoke Flows", () => {
 
   it("bulk publishes draft results for a teacher", async () => {
     seedAuthUser("admin_1", "Admin", "school_1");
+    mockState.teachers.set("teacher_bulk", {
+      id: "teacher_bulk",
+      schoolId: "school_1",
+      isDeleted: false,
+    });
+    mockState.teacherAssignments.set("ta_1", {
+      id: "ta_1",
+      teacherId: "teacher_bulk",
+      schoolId: "school_1",
+      classId: "10",
+      sectionId: "A",
+    });
 
-    seedDoc("results", "r1", {
+    mockState.results.set("r1", {
       id: "r1",
       schoolId: "school_1",
-      teacherId: "teacher_bulk",
+      studentId: "stu_1",
+      studentName: "Student One",
+      rollNumber: "1",
+      classId: "10",
+      sectionId: "A",
+      examType: "UnitTest",
+      examName: "Unit Test 1",
+      subject: "Math",
+      marksObtained: 85,
+      totalMarks: 100,
       published: false,
-      isDeleted: false,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
-    seedDoc("results", "r2", {
+    mockState.results.set("r2", {
       id: "r2",
       schoolId: "school_1",
-      teacherId: "teacher_bulk",
+      studentId: "stu_2",
+      studentName: "Student Two",
+      rollNumber: "2",
+      classId: "10",
+      sectionId: "A",
+      examType: "UnitTest",
+      examName: "Unit Test 1",
+      subject: "Science",
+      marksObtained: 78,
+      totalMarks: 100,
       published: false,
-      isDeleted: false,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
-    seedDoc("results", "r3", {
+    mockState.results.set("r3", {
       id: "r3",
       schoolId: "school_1",
-      teacherId: "teacher_bulk",
+      studentId: "stu_3",
+      studentName: "Student Three",
+      rollNumber: "3",
+      classId: "10",
+      sectionId: "A",
+      examType: "UnitTest",
+      examName: "Unit Test 1",
+      subject: "English",
+      marksObtained: 91,
+      totalMarks: 100,
       published: true,
-      isDeleted: false,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
     mockVerifyIdToken.mockResolvedValueOnce({ uid: "admin_1", email: "admin_1@school.test" });

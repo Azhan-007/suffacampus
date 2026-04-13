@@ -86,7 +86,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Initial auth check - runs only once on mount
   useEffect(() => {
-    // If user already exists in state (persisted or demo), we're good
+    // If user already exists in persisted state, hydrate UI immediately,
+    // but still subscribe to Firebase auth state to reconcile stale sessions.
     if (user) {
       setAuthChecked(true);
       setAuthCookies(user.role);
@@ -95,7 +96,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loadUserSchools(user).catch(() => {});
       }
       setLoading(false);
-      return;
     }
 
     // Subscribe to Firebase auth state
@@ -132,7 +132,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // 1. Auth has been checked (Firebase responded)
     // 2. No user exists
     // 3. Not already on public pages
-    const publicPaths = ['/login', '/forgot-password', '/pricing', '/test-bare', '/test-login'];
+    const debugRoutesEnabled = process.env.NODE_ENV !== 'production';
+    const publicPaths = debugRoutesEnabled
+      ? ['/login', '/forgot-password', '/pricing', '/test-bare', '/test-login']
+      : ['/login', '/forgot-password', '/pricing'];
     const isPublicPage = publicPaths.some(path => pathname === path || pathname.startsWith(path + '/'));
     
     if (authChecked && !user && !isPublicPage) {

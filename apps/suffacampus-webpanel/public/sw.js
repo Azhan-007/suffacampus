@@ -5,6 +5,10 @@ const SHELL_ASSETS = [
   '/dashboard',
   '/manifest.json',
 ];
+const IS_LOCALHOST =
+  self.location.hostname === 'localhost' ||
+  self.location.hostname === '127.0.0.1' ||
+  self.location.hostname === '[::1]';
 
 function parsePushPayload(event) {
   if (!event.data) return {};
@@ -18,6 +22,11 @@ function parsePushPayload(event) {
 
 // Install â€” pre-cache the app shell
 self.addEventListener('install', (event) => {
+  if (IS_LOCALHOST) {
+    self.skipWaiting();
+    return;
+  }
+
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS))
   );
@@ -26,6 +35,16 @@ self.addEventListener('install', (event) => {
 
 // Activate â€” clean up old caches
 self.addEventListener('activate', (event) => {
+  if (IS_LOCALHOST) {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+        .then(() => self.registration.unregister())
+    );
+    return;
+  }
+
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
@@ -36,6 +55,8 @@ self.addEventListener('activate', (event) => {
 
 // Fetch â€” network-first for API, cache-first for static
 self.addEventListener('fetch', (event) => {
+  if (IS_LOCALHOST) return;
+
   const { request } = event;
   const url = new URL(request.url);
 

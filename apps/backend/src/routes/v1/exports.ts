@@ -1,8 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { authenticate } from "../../middleware/auth";
-import { tenantGuard } from "../../middleware/tenant";
-import { roleMiddleware } from "../../middleware/role";
-import { enforceSubscription } from "../../middleware/subscription";
+import { apiKeyOrUserAuth } from "../../middleware/apiKey";
+import { exportsRateLimitProfile } from "../../plugins/rateLimit";
 import {
   exportByTemplate,
   EXPORT_TEMPLATES,
@@ -11,12 +9,15 @@ import {
 const VALID_TEMPLATES = Object.keys(EXPORT_TEMPLATES);
 
 export default async function exportRoutes(server: FastifyInstance) {
-  const authChain = [
-    authenticate,
-    tenantGuard,
-    roleMiddleware(["Admin", "Teacher", "SuperAdmin"]),
-    enforceSubscription,
-  ];
+  const exportAccess = apiKeyOrUserAuth({
+    requiredPermission: "exports:read",
+    allowedRoles: ["Admin", "Teacher", "SuperAdmin"],
+    requireSubscription: true,
+  });
+
+  const exportListAccess = apiKeyOrUserAuth({
+    requiredPermission: "exports:read",
+  });
 
   // -----------------------------------------------------------------------
   // GET /exports/:template — download CSV export
@@ -25,7 +26,10 @@ export default async function exportRoutes(server: FastifyInstance) {
   // -----------------------------------------------------------------------
   server.get<{ Params: { template: string } }>(
     "/exports/:template",
-    { preHandler: authChain },
+    {
+      config: { rateLimit: exportsRateLimitProfile },
+      preHandler: [exportAccess],
+    },
     async (request, reply) => {
       const { template } = request.params;
       const schoolId = request.schoolId as string;
@@ -73,7 +77,10 @@ export default async function exportRoutes(server: FastifyInstance) {
   // -----------------------------------------------------------------------
   server.get(
     "/exports",
-    { preHandler: [authenticate, tenantGuard] },
+    {
+      config: { rateLimit: exportsRateLimitProfile },
+      preHandler: [exportListAccess],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       return reply.status(200).send({
         success: true,

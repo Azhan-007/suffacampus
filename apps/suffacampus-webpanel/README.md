@@ -49,8 +49,8 @@ Open [http://localhost:3000](http://localhost:3000).
 
 | Role | Email | Password |
 |------|-------|----------|
-| Admin | `demo@SuffaCampus.com` | `demo123` |
-| SuperAdmin | `superadmin@SuffaCampus.com` | `demo123` |
+| Admin | Set via local seed/env | Set via local seed/env |
+| SuperAdmin | Set via local seed/env | Set via local seed/env |
 
 Demo data includes three school tenants with distinct subscription plans, student rosters, fee records, attendance history, and event calendars.
 

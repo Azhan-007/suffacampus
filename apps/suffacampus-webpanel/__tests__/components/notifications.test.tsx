@@ -41,7 +41,25 @@ function renderWithClient(ui: React.ReactElement) {
   return { queryClient, ...render(ui, { wrapper: Wrapper }) };
 }
 
-function buildNotification(overrides: Partial<Record<string, unknown>> = {}) {
+type TestNotification = {
+  id: string;
+  schoolId: string;
+  title: string;
+  message: string;
+  type: null;
+  severity: null;
+  actionUrl: null;
+  targetType: string;
+  targetId: string;
+  referenceId: null;
+  referenceType: null;
+  createdBy: string;
+  createdAt: string;
+  isRead: boolean;
+  readAt: string | null;
+};
+
+function buildNotification(overrides: Partial<TestNotification> = {}): TestNotification {
   return {
     id: 'notif_1',
     schoolId: 'school_1',

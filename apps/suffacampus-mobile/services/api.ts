@@ -5,9 +5,6 @@
  *  - Firebase Auth stays client-side (uses ID token for every request).
  *  - Firestore client SDK is NOT used here or anywhere in the services layer.
  *  - All data reads/writes go through the backend URL below.
- *
- * ⚠️  On a physical device, `localhost` resolves to the phone itself.
- *     Use your PC's LAN IP instead (shown after `npm run dev` / `tsx watch`).
  */
 
 import { auth } from "../firebase";
@@ -19,6 +16,7 @@ const DEFAULT_TIMEOUT_MS = 15_000; // 15 seconds
 const MAX_RETRIES = 1;
 const RETRY_BASE_MS = 500;
 const RETRYABLE_STATUSES = new Set([408, 502, 503, 504]);
+const DEFAULT_TESTING_API_URL = "https://suffacampus-backend-k8ox.onrender.com/api/v1";
 
 /**
  * Wraps `fetch` with an AbortController timeout.
@@ -91,22 +89,14 @@ function sleep(ms: number): Promise<void> {
 /**
  * Resolve API base URL in this priority:
  *  1. EXPO_PUBLIC_API_URL env variable (set in .env or app.json extra)
- *  2. Fallback to localhost:5000/api/v1 (works on web / emulators)
- *
- * For a physical device, set EXPO_PUBLIC_API_URL to your PC's LAN IP:
- *   EXPO_PUBLIC_API_URL=http://192.168.1.100:5000/api/v1
+ *  2. Temporary Render testing fallback
  *
  * The URL MUST include the /api/v1 prefix — all backend routes live there.
  */
 export const BASE_URL: string =
   (Constants.expoConfig?.extra?.apiUrl as string) ??
   process.env.EXPO_PUBLIC_API_URL ??
-  (() => {
-    if (__DEV__) return "http://localhost:5000/api/v1";
-    throw new Error(
-      "EXPO_PUBLIC_API_URL is not set. Configure it in .env for production builds."
-    );
-  })();
+  DEFAULT_TESTING_API_URL;
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 

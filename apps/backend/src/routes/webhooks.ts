@@ -12,6 +12,7 @@ import { enqueueWebhookRetry } from "../services/webhook-retry-queue.service";
 import { prisma } from "../lib/prisma";
 
 interface RazorpayWebhookPayload {
+  created_at?: number | string;
   event: string;
   payload: {
     payment?: {
@@ -46,10 +47,36 @@ interface StripeWebhookPayload {
   };
 }
 
+const RAZORPAY_WEBHOOK_MAX_AGE_MS = 5 * 60 * 1000;
+
 function getRawBody(body: unknown): Buffer {
   if (body instanceof Buffer) return body;
   if (typeof body === "string") return Buffer.from(body);
   return Buffer.from(JSON.stringify(body ?? {}));
+}
+
+function normalizeUnixTimestampMs(value: unknown): number | null {
+  let raw: string | number | undefined;
+
+  if (Array.isArray(value)) {
+    raw = value[0];
+  } else if (typeof value === "string" || typeof value === "number") {
+    raw = value;
+  }
+
+  if (raw === undefined) {
+    return null;
+  }
+
+  const parsed =
+    typeof raw === "number" ? raw : Number.parseInt(raw.trim(), 10);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  // Razorpay commonly sends UNIX seconds in webhook payloads.
+  return parsed < 1_000_000_000_000 ? parsed * 1000 : parsed;
 }
 
 async function queueWebhookRetry(
@@ -109,6 +136,9 @@ export default async function webhookRoutes(server: FastifyInstance) {
   server.post("/webhooks/razorpay", async (request, reply) => {
     const rawBody = getRawBody(request.body);
     const signature = request.headers["x-razorpay-signature"];
+    const eventIdHeader = request.headers["x-razorpay-event-id"];
+    const razorpayEventId =
+      typeof eventIdHeader === "string" ? eventIdHeader : undefined;
 
     if (!signature || typeof signature !== "string") {
       request.log.warn("Razorpay webhook: missing x-razorpay-signature header");
@@ -146,13 +176,42 @@ export default async function webhookRoutes(server: FastifyInstance) {
         .send({ success: false, message: "Malformed JSON body" });
     }
 
-    request.log.info({ event: event.event }, "Razorpay webhook received");
+    const eventTimestampMs = normalizeUnixTimestampMs(event.created_at);
+    if (!eventTimestampMs) {
+      request.log.warn(
+        { event: event.event, eventId: razorpayEventId },
+        "Razorpay webhook rejected: missing or invalid created_at timestamp"
+      );
+      return reply
+        .status(400)
+        .send({ success: false, message: "Missing or invalid webhook timestamp" });
+    }
+
+    if (eventTimestampMs < Date.now() - RAZORPAY_WEBHOOK_MAX_AGE_MS) {
+      request.log.warn(
+        {
+          event: event.event,
+          eventId: razorpayEventId,
+          eventTimestampMs,
+        },
+        "Razorpay webhook rejected: stale timestamp"
+      );
+      return reply
+        .status(400)
+        .send({ success: false, message: "Webhook too old" });
+    }
+
+    request.log.info(
+      { event: event.event, eventId: razorpayEventId },
+      "Razorpay webhook received"
+    );
 
     try {
       switch (event.event) {
         case "payment.captured": {
           const processed = await handlePaymentCaptured(
-            event as PaymentCapturedPayload
+            event as PaymentCapturedPayload,
+            { source: "webhook" }
           );
 
           if (processed) {
@@ -268,7 +327,7 @@ export default async function webhookRoutes(server: FastifyInstance) {
         rawBody,
         err,
         event.payload?.payment?.entity?.notes?.schoolId,
-        event.payload?.payment?.entity?.id
+        razorpayEventId ?? event.payload?.payment?.entity?.id
       );
 
       return reply

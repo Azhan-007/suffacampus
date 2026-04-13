@@ -4,7 +4,7 @@
  * Architecture rules:
  *  - Firebase Auth MUST remain client-side (used to obtain ID tokens).
  *  - Firestore client SDK has been REMOVED. All data access goes through
- *    the Fastify backend at http://localhost:5000 via services/api.ts.
+ *    the Fastify backend URL configured in EXPO_PUBLIC_API_URL via services/api.ts.
  */
 
 import { getApps, initializeApp } from "firebase/app";

@@ -2,11 +2,14 @@ import { prisma } from "../lib/prisma";
 import type { UpdateSettingsInput } from "../schemas/modules.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 /**
  * Retrieve school settings (from the School model).
  */
 export async function getSettings(schoolId: string) {
+  assertSchoolScope(schoolId);
+
   const school = await prisma.school.findUnique({ where: { id: schoolId } });
   if (!school) return null;
   return school;
@@ -20,6 +23,8 @@ export async function updateSettings(
   data: UpdateSettingsInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.school.findUnique({ where: { id: schoolId } });
   if (!existing) throw Errors.notFound("School", schoolId);
 

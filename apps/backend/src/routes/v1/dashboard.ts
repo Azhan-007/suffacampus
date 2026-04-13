@@ -5,17 +5,24 @@ import {
   getUpcomingEvents,
 } from "../../services/dashboard.service";
 import { enterCriticalLaneOrReplyOverloaded } from "../../lib/overload";
-import { authenticate } from "../../middleware/auth";
-import { tenantGuard } from "../../middleware/tenant";
+import { apiKeyOrUserAuth } from "../../middleware/apiKey";
+import { analyticsRateLimitProfile } from "../../plugins/rateLimit";
 import { sendSuccess } from "../../utils/response";
 
-const preHandler = [authenticate, tenantGuard];
+const preHandler = [
+  apiKeyOrUserAuth({
+    requiredPermission: "analytics:read",
+  }),
+];
 
 export default async function dashboardRoutes(server: FastifyInstance) {
   // GET /dashboard/stats — overview metrics
   server.get(
     "/dashboard/stats",
-    { preHandler },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler,
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const release = enterCriticalLaneOrReplyOverloaded(
         request,
@@ -36,7 +43,10 @@ export default async function dashboardRoutes(server: FastifyInstance) {
   // GET /dashboard/activity — recent audit log entries
   server.get<{ Querystring: Record<string, string | undefined> }>(
     "/dashboard/activity",
-    { preHandler },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler,
+    },
     async (request, reply) => {
       const release = enterCriticalLaneOrReplyOverloaded(
         request,
@@ -58,7 +68,10 @@ export default async function dashboardRoutes(server: FastifyInstance) {
   // GET /dashboard/upcoming-events
   server.get<{ Querystring: Record<string, string | undefined> }>(
     "/dashboard/upcoming-events",
-    { preHandler },
+    {
+      config: { rateLimit: analyticsRateLimitProfile },
+      preHandler,
+    },
     async (request, reply) => {
       const release = enterCriticalLaneOrReplyOverloaded(
         request,

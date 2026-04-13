@@ -202,12 +202,12 @@ model School {
   subscriptionStatus    SubscriptionStatus @default(trial)
   subscriptionStartDate DateTime           @default(now())
   subscriptionEndDate   DateTime?
-  trialEndDate          String?
+  trialEndDate          DateTime?
   autoRenew             Boolean            @default(false)
   currentPeriodStart    DateTime?
   currentPeriodEnd      DateTime?
   cancelledAt           DateTime?
-  cancelEffectiveDate   String?
+  cancelEffectiveDate   DateTime?
   paymentFailureCount   Int                @default(0)
   lastPaymentId         String?
 
@@ -269,6 +269,8 @@ model School {
   webhookDeliveries     WebhookDelivery[]
   activities            Activity[]
   config                SchoolConfig?
+  sessions              Session[]
+  revokedTokens         RevokedToken[]
 
   @@index([code])
   @@index([subscriptionStatus])
@@ -295,6 +297,8 @@ model User {
   // Tenant
   schoolId              String?
   school                School?   @relation(fields: [schoolId], references: [id])
+  sessions              Session[]
+  revokedTokens         RevokedToken[]
 
   // Link to student/teacher record if applicable
   studentId             String?
@@ -329,15 +333,15 @@ model Student {
   parentPhone         String
   parentEmail         String?
   gender              Gender
-  dateOfBirth         String?
+  dateOfBirth         DateTime?
   photoURL            String?
 
   // Academic
   classId             String
   sectionId           String
   rollNumber          String
-  enrollmentDate      String?
-  admissionDate       String?
+  enrollmentDate      DateTime?
+  admissionDate       DateTime?
 
   // Address
   address             String?
@@ -420,7 +424,7 @@ model Teacher {
   gender            Gender?
   address           String?
   photoURL          String?
-  joiningDate       String?
+  joiningDate       DateTime?
 
   // Status
   isActive          Boolean             @default(true)
@@ -512,7 +516,7 @@ model Attendance {
   studentName String?
   classId     String
   sectionId   String
-  date        String                                       // YYYY-MM-DD format
+  date        DateTime
   status      AttendanceStatus
   markedBy    String?
   remarks     String?
@@ -544,7 +548,7 @@ model Assignment {
   subject          String
   teacherId        String
   teacherName      String?
-  dueDate          String
+  dueDate          DateTime
   totalMarks       Int
   attachments      String[]                                // Array of file URLs
   status           AssignmentStatus @default(Pending)
@@ -570,8 +574,8 @@ model Event {
 
   title           String
   description     String
-  eventDate       String
-  endDate         String?
+  eventDate       DateTime
+  endDate         DateTime?
   eventType       EventType
   targetAudience  String[]                                 // ['All', 'Students', 'Teachers', 'Parents']
   location        String?
@@ -601,14 +605,14 @@ model Fee {
   studentName     String?
   classId         String
   sectionId       String
-  amount          Float
-  dueDate         String
-  paidDate        String?
+  amount          Decimal   @db.Decimal(14, 2)
+  dueDate         DateTime
+  paidDate        DateTime?
   status          LegacyFeeStatus @default(Pending)
   paymentMode     String?
   transactionId   String?
   feeType         String
-  amountPaid      Float?    @default(0)
+  amountPaid      Decimal?  @default(0) @db.Decimal(14, 2)
   remarks         String?
 
   createdAt       DateTime  @default(now())
@@ -627,7 +631,7 @@ model Fee {
 model FeeStructure {
   id          String      @id @default(cuid())
   name        String
-  amount      Float
+  amount      Decimal     @db.Decimal(14, 2)
   classId     String
   class       Class       @relation(fields: [classId], references: [id], onDelete: Cascade)
   schoolId    String
@@ -649,8 +653,8 @@ model StudentFee {
   feeStructure   FeeStructure @relation(fields: [feeStructureId], references: [id], onDelete: Restrict)
   schoolId       String
   school         School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  totalAmount    Float
-  paidAmount     Float        @default(0)
+  totalAmount    Decimal      @db.Decimal(14, 2)
+  paidAmount     Decimal      @default(0) @db.Decimal(14, 2)
   status         FeeStatus    @default(PENDING)
 
   payments       Payment[]
@@ -667,7 +671,7 @@ model Payment {
   id           String     @id @default(cuid())
   studentFeeId String
   studentFee   StudentFee @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
-  amount       Float
+  amount       Decimal    @db.Decimal(14, 2)
   paidAt       DateTime
   schoolId     String
   school       School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -721,11 +725,11 @@ model LibraryTransaction {
   book        Book                     @relation(fields: [bookId], references: [id])
   studentId   String
   student     Student                  @relation(fields: [studentId], references: [id])
-  issueDate   String
-  dueDate     String
-  returnDate  String?
+  issueDate   DateTime
+  dueDate     DateTime
+  returnDate  DateTime?
   status      LibraryTransactionStatus @default(Issued)
-  fine        Float?                   @default(0)
+  fine        Decimal?                 @default(0) @db.Decimal(14, 2)
   issuedBy    String?
 
   createdAt   DateTime                 @default(now())
@@ -810,8 +814,8 @@ model Period {
   teacherId     String
   teacher       Teacher   @relation(fields: [teacherId], references: [id])
   teacherName   String?
-  startTime     String
-  endTime       String
+  startTime     DateTime
+  endTime       DateTime
   roomNumber    String?
 
   @@index([timetableId])
@@ -828,8 +832,8 @@ model Plan {
   name         String
   description  String?
 
-  monthlyPrice Float            @default(0)
-  yearlyPrice  Float            @default(0)
+  monthlyPrice Decimal          @default(0) @db.Decimal(14, 2)
+  yearlyPrice  Decimal          @default(0) @db.Decimal(14, 2)
 
   maxStudents  Int              @default(50)
   maxTeachers  Int              @default(10)
@@ -856,7 +860,7 @@ model Subscription {
   cancelledAt     DateTime?
 
   // Billing
-  amount          Float              @default(0)
+  amount          Decimal            @default(0) @db.Decimal(14, 2)
   currency        String             @default("INR")
   nextBillingDate DateTime?
 
@@ -887,7 +891,7 @@ model Invoice {
   invoiceNumber       String?  @unique
 
   plan                String
-  amount              Float
+  amount              Decimal  @db.Decimal(14, 2)
   currency            String   @default("INR")
   status              String   @default("pending")  // paid, pending, failed, refunded, credit
 
@@ -896,8 +900,8 @@ model Invoice {
   razorpayOrderId     String?
 
   // Billing period
-  periodStart         String?
-  periodEnd           String?
+  periodStart         DateTime?
+  periodEnd           DateTime?
 
   description         String?
   paidAt              DateTime?
@@ -916,8 +920,8 @@ model Report {
   id            String   @id @default(cuid())
   schoolId      String
   type          String
-  startDate     String
-  endDate       String
+  startDate     DateTime
+  endDate       DateTime
   filters       Json?
   stats         Json?
   requestedBy   String
@@ -966,6 +970,61 @@ model DeviceToken {
   @@index([token])
   @@index([userId])
   @@index([schoolId])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SESSION
+// ═══════════════════════════════════════════════════════════════
+
+model Session {
+  id           String    @id @default(cuid())
+  userUid      String
+  user         User      @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  schoolId     String?
+  school       School?   @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+
+  device       String
+  ipAddress    String?
+  userAgent    String?
+
+  currentJti   String    @unique
+  lastActiveAt DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  revokeReason String?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  revokedTokens RevokedToken[]
+
+  @@index([userUid, revokedAt])
+  @@index([schoolId, revokedAt])
+  @@index([expiresAt])
+  @@index([lastActiveAt])
+}
+
+model RevokedToken {
+  id        String    @id @default(cuid())
+  jti       String    @unique
+
+  sessionId String?
+  session   Session?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  userUid   String
+  user      User      @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  schoolId  String?
+  school    School?   @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+
+  reason    String?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  @@index([userUid, expiresAt])
+  @@index([sessionId, expiresAt])
+  @@index([schoolId, expiresAt])
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1025,24 +1084,26 @@ model LegacyPayment {
   schoolId             String
   school               School        @relation(fields: [schoolId], references: [id])
   subscriptionId       String?
+  idempotencyKey       String?
 
   // Payment details
-  amount               Float
+  amount               Decimal       @db.Decimal(14, 2)
   currency             String        @default("INR")
   status               PaymentStatus @default(pending)
   method               PaymentMethod?
 
   // Gateway info (Razorpay)
-  gatewayId            String?                            // razorpay payment_id
-  gatewayOrderId       String?
+  gatewayId            String?        @unique            // razorpay payment_id
+  gatewayOrderId       String?        @unique
   gatewaySignature     String?
+  verifiedAt           DateTime?
 
   // Card/UPI details (masked)
   paymentMethodDetails Json?
 
   // Status
   failureReason        String?
-  refundedAmount       Float?        @default(0)
+  refundedAmount       Decimal?      @default(0) @db.Decimal(14, 2)
   description          String?
   receiptUrl           String?
 
@@ -1050,8 +1111,7 @@ model LegacyPayment {
   updatedAt            DateTime      @updatedAt
 
   @@index([schoolId])
-  @@index([gatewayId])
-  @@index([gatewayOrderId])
+  @@unique([schoolId, idempotencyKey])
 
   @@map("Payment")
 }

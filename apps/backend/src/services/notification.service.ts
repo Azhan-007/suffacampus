@@ -1,5 +1,5 @@
 ﻿import pino from "pino";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { Errors } from "../errors";
 import { writeAuditLog } from "./audit.service";
@@ -8,6 +8,7 @@ import {
   NotificationPreferenceService,
   type NotificationPreferenceType,
 } from "./notification-preference.service";
+import { assertSchoolScope } from "../lib/tenant-scope";
 
 const log = pino({ name: "notification" });
 
@@ -109,6 +110,27 @@ function shouldEnqueueNotificationJobs(): boolean {
   return process.env.NOTIFICATION_QUEUE_ENABLED === "true";
 }
 
+function isSchemaCompatibilityError(error: unknown, identifiers: string[]): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code !== "P2021" && error.code !== "P2022") {
+    return false;
+  }
+
+  const table = String((error.meta as { table?: unknown } | undefined)?.table ?? "");
+  const column = String((error.meta as { column?: unknown } | undefined)?.column ?? "");
+
+  if (!table && !column) {
+    return true;
+  }
+
+  return identifiers.some(
+    (identifier) => table.includes(identifier) || column.includes(identifier)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // In-app notifications
 // ---------------------------------------------------------------------------
@@ -117,6 +139,8 @@ export async function createNotification(
   input: CreateNotificationInput,
   context: NotificationContext
 ) {
+  assertSchoolScope(context.schoolId);
+
   assertCreateRole(context.role);
 
   const targetId = resolveTargetId(input, context);
@@ -194,6 +218,8 @@ export async function getNotificationsForUser(
   context: NotificationContext,
   options: { limit?: number } = {}
 ) {
+  assertSchoolScope(context.schoolId);
+
   const preferences = await NotificationPreferenceService.getPreferences({
     userId: context.userId,
     schoolId: context.schoolId,
@@ -204,24 +230,64 @@ export async function getNotificationsForUser(
   }
 
   const limit = options.limit ?? 50;
-  const notifications = await prisma.notification.findMany({
-    where: {
-      schoolId: context.schoolId,
-      OR: [
-        { targetType: "USER", targetId: context.userId },
-        { targetType: "ROLE", targetId: context.role },
-        { targetType: "SCHOOL" },
-      ],
-    },
-    include: {
-      reads: {
-        where: { userId: context.userId },
-        select: { readAt: true },
+  let notifications: Array<
+    Prisma.NotificationGetPayload<{
+      include: { reads: { where: { userId: string }; select: { readAt: true } } };
+    }>
+  > = [];
+
+  try {
+    notifications = await prisma.notification.findMany({
+      where: {
+        schoolId: context.schoolId,
+        OR: [
+          { targetType: "USER", targetId: context.userId },
+          { targetType: "ROLE", targetId: context.role },
+          { targetType: "SCHOOL" },
+        ],
       },
-    },
-    orderBy: { createdAt: "desc" },
-    take: limit,
-  });
+      include: {
+        reads: {
+          where: { userId: context.userId },
+          select: { readAt: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    });
+  } catch (error) {
+    if (isSchemaCompatibilityError(error, ["NotificationRead"])) {
+      try {
+        const fallbackNotifications = await prisma.notification.findMany({
+          where: {
+            schoolId: context.schoolId,
+            OR: [
+              { targetType: "USER", targetId: context.userId },
+              { targetType: "ROLE", targetId: context.role },
+              { targetType: "SCHOOL" },
+            ],
+          },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+        });
+
+        notifications = fallbackNotifications.map((notification) => ({
+          ...notification,
+          reads: [],
+        })) as typeof notifications;
+      } catch (fallbackError) {
+        if (isSchemaCompatibilityError(fallbackError, ["Notification", "NotificationRead"])) {
+          return [];
+        }
+
+        throw fallbackError;
+      }
+    } else if (isSchemaCompatibilityError(error, ["Notification"])) {
+      return [];
+    } else {
+      throw error;
+    }
+  }
 
   const filtered = notifications.filter((notification) =>
     isPreferenceEnabled(
@@ -245,10 +311,26 @@ export async function markAsRead(
   notificationId: string,
   context: NotificationContext
 ): Promise<boolean> {
-  const notification = await prisma.notification.findFirst({
-    where: { id: notificationId, schoolId: context.schoolId },
-    select: { id: true, targetType: true, targetId: true },
-  });
+  assertSchoolScope(context.schoolId);
+
+  let notification: {
+    id: string;
+    targetType: "USER" | "ROLE" | "SCHOOL";
+    targetId: string | null;
+  } | null = null;
+
+  try {
+    notification = await prisma.notification.findFirst({
+      where: { id: notificationId, schoolId: context.schoolId },
+      select: { id: true, targetType: true, targetId: true },
+    });
+  } catch (error) {
+    if (isSchemaCompatibilityError(error, ["Notification"])) {
+      return false;
+    }
+
+    throw error;
+  }
 
   if (!notification) {
     throw Errors.notFound("Notification", notificationId);
@@ -263,50 +345,79 @@ export async function markAsRead(
     throw Errors.notFound("Notification", notificationId);
   }
 
-  await prisma.notificationRead.upsert({
-    where: {
-      notificationId_userId: {
+  try {
+    await prisma.notificationRead.upsert({
+      where: {
+        notificationId_userId: {
+          notificationId,
+          userId: context.userId,
+        },
+      },
+      update: {},
+      create: {
         notificationId,
         userId: context.userId,
       },
-    },
-    update: {},
-    create: {
-      notificationId,
-      userId: context.userId,
-    },
-  });
+    });
+  } catch (error) {
+    if (!isSchemaCompatibilityError(error, ["NotificationRead"])) {
+      throw error;
+    }
+  }
 
   return true;
 }
 
 export async function markAllAsRead(context: NotificationContext): Promise<number> {
-  const notifications = await prisma.notification.findMany({
-    where: {
-      schoolId: context.schoolId,
-      OR: [
-        { targetType: "USER", targetId: context.userId },
-        { targetType: "ROLE", targetId: context.role },
-        { targetType: "SCHOOL" },
-      ],
-    },
-    select: { id: true },
-  });
+  assertSchoolScope(context.schoolId);
+
+  let notifications: Array<{ id: string }> = [];
+
+  try {
+    notifications = await prisma.notification.findMany({
+      where: {
+        schoolId: context.schoolId,
+        OR: [
+          { targetType: "USER", targetId: context.userId },
+          { targetType: "ROLE", targetId: context.role },
+          { targetType: "SCHOOL" },
+        ],
+      },
+      select: { id: true },
+    });
+  } catch (error) {
+    if (isSchemaCompatibilityError(error, ["Notification"])) {
+      return 0;
+    }
+
+    throw error;
+  }
 
   if (notifications.length === 0) return 0;
 
-  const result = await prisma.notificationRead.createMany({
-    data: notifications.map((n) => ({
-      notificationId: n.id,
-      userId: context.userId,
-    })),
-    skipDuplicates: true,
-  });
+  try {
+    const result = await prisma.notificationRead.createMany({
+      data: notifications.map((n) => ({
+        notificationId: n.id,
+        userId: context.userId,
+      })),
+      skipDuplicates: true,
+    });
 
-  return result.count;
+    return result.count;
+  } catch (error) {
+    if (!isSchemaCompatibilityError(error, ["NotificationRead"])) {
+      throw error;
+    }
+
+    // Legacy DBs may not have NotificationRead yet; treat as no-op.
+    return notifications.length;
+  }
 }
 
 export async function getUnreadCount(context: NotificationContext): Promise<number> {
+  assertSchoolScope(context.schoolId);
+
   const preferences = await NotificationPreferenceService.getPreferences({
     userId: context.userId,
     schoolId: context.schoolId,
@@ -349,18 +460,43 @@ export async function getUnreadCount(context: NotificationContext): Promise<numb
     targetClauses.push({ targetType: "ROLE", targetId: context.role });
   }
 
-  return prisma.notification.count({
-    where: {
-      schoolId: context.schoolId,
-      OR: targetClauses,
-      ...(referenceFilters.length > 0 ? { AND: [{ OR: referenceFilters }] } : {}),
-      NOT: {
-        reads: {
-          some: { userId: context.userId },
+  const baseWhere: Prisma.NotificationWhereInput = {
+    schoolId: context.schoolId,
+    OR: targetClauses,
+    ...(referenceFilters.length > 0 ? { AND: [{ OR: referenceFilters }] } : {}),
+  };
+
+  try {
+    return await prisma.notification.count({
+      where: {
+        ...baseWhere,
+        NOT: {
+          reads: {
+            some: { userId: context.userId },
+          },
         },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (isSchemaCompatibilityError(error, ["Notification"])) {
+      return 0;
+    }
+
+    if (!isSchemaCompatibilityError(error, ["NotificationRead"])) {
+      throw error;
+    }
+
+    // Legacy DBs without NotificationRead: report total matching notifications.
+    try {
+      return await prisma.notification.count({ where: baseWhere });
+    } catch (fallbackError) {
+      if (isSchemaCompatibilityError(fallbackError, ["Notification"])) {
+        return 0;
+      }
+
+      throw fallbackError;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

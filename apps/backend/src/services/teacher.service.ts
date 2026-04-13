@@ -4,6 +4,8 @@ import type { CreateTeacherInput } from "../schemas/teacher.schema";
 import type { UpdateTeacherInput } from "../schemas/update.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
+import { assertSchoolScope } from "../lib/tenant-scope";
+import { enforcePlanLimit } from "./plan-limit.service";
 
 export interface TeacherCredentials {
   email: string;
@@ -24,6 +26,8 @@ async function provisionTeacherAuth(
   teacher: { id: string; firstName: string; lastName: string; email: string },
   schoolId: string
 ): Promise<TeacherCredentials> {
+  assertSchoolScope(schoolId);
+
   const tempPassword = buildSimplePassword(teacher.firstName);
   const username = buildTeacherUsername(teacher.firstName, teacher.lastName);
 
@@ -78,6 +82,9 @@ export async function createTeacher(
   data: CreateTeacherInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+  await enforcePlanLimit("teachers", schoolId);
+
   const { assignedClasses, ...teacherData } = data;
 
   const teacher = await prisma.teacher.create({
@@ -116,6 +123,8 @@ export async function getTeachersBySchool(
   pagination: { limit?: number; cursor?: string; sortBy?: string; sortOrder?: "asc" | "desc" },
   filters: { department?: string; status?: string; search?: string } = {}
 ) {
+  assertSchoolScope(schoolId);
+
   const where: any = { schoolId, isDeleted: false };
 
   if (filters.department) where.department = filters.department;
@@ -155,6 +164,8 @@ export async function getTeachersBySchool(
 }
 
 export async function getAllTeachersBySchool(schoolId: string) {
+  assertSchoolScope(schoolId);
+
   return prisma.teacher.findMany({
     where: { schoolId, isDeleted: false },
     include: { assignedClasses: true },
@@ -163,6 +174,8 @@ export async function getAllTeachersBySchool(schoolId: string) {
 }
 
 export async function getTeacherById(teacherId: string, schoolId: string) {
+  assertSchoolScope(schoolId);
+
   const teacher = await prisma.teacher.findUnique({
     where: { id: teacherId },
     include: { assignedClasses: true },
@@ -181,6 +194,8 @@ export async function updateTeacher(
   data: UpdateTeacherInput,
   performedBy: string
 ) {
+  assertSchoolScope(schoolId);
+
   const existing = await prisma.teacher.findUnique({ where: { id: teacherId } });
 
   if (!existing) throw Errors.notFound("Teacher", teacherId);
@@ -191,7 +206,12 @@ export async function updateTeacher(
 
   // If assignedClasses changed, replace them
   if (assignedClasses !== undefined) {
-    await prisma.teacherClassAssignment.deleteMany({ where: { teacherId } });
+    await prisma.teacherClassAssignment.deleteMany({
+      where: {
+        teacherId,
+        teacher: { schoolId },
+      },
+    });
     if (assignedClasses.length > 0) {
       await prisma.teacherClassAssignment.createMany({
         data: assignedClasses.map((ac) => ({
@@ -224,6 +244,8 @@ export async function softDeleteTeacher(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const teacher = await prisma.teacher.findUnique({ where: { id: teacherId } });
 
   if (!teacher) return false;
@@ -250,6 +272,8 @@ export async function permanentDeleteTeacher(
   schoolId: string,
   performedBy: string
 ): Promise<boolean> {
+  assertSchoolScope(schoolId);
+
   const teacher = await prisma.teacher.findUnique({ where: { id: teacherId } });
 
   if (!teacher) return false;
