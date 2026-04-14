@@ -14,6 +14,16 @@
         value: "true"
       - key: NOTIFICATION_WORKER_MODE
         value: in-process
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL_SECONDS
+        value: "86400"
+      - key: JWT_ISSUER
+        value: suffacampus-api
+      - key: JWT_AUDIENCE
+        value: suffacampus-clients
+      - key: AUTH_ALLOW_FIREBASE_FALLBACK
+        value: "false"
       - key: FRONTEND_URL
         value: https://suffacampus.netlify.app
       - key: CORS_ORIGINS
