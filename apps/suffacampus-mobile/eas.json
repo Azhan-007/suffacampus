@@ -6,7 +6,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://SuffaCampus-backend-k8ox.onrender.com/api/v1",
+        "EXPO_PUBLIC_API_URL": "https://suffacampus-backend-new.onrender.com/api/v1",
         "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyA-kfptqCnEpwfEIm1mvZpz-qFZ8LB8KA4",
         "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "SuffaCampus-fa194.firebaseapp.com",
         "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "SuffaCampus-fa194",

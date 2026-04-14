@@ -16,7 +16,7 @@ const DEFAULT_TIMEOUT_MS = 15_000; // 15 seconds
 const MAX_RETRIES = 1;
 const RETRY_BASE_MS = 500;
 const RETRYABLE_STATUSES = new Set([408, 502, 503, 504]);
-const DEFAULT_TESTING_API_URL = "https://suffacampus-backend-k8ox.onrender.com/api/v1";
+const DEFAULT_TESTING_API_URL = "https://suffacampus-backend-new.onrender.com/api/v1";
 
 /**
  * Wraps `fetch` with an AbortController timeout.
