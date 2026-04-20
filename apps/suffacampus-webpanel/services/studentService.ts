@@ -1,5 +1,6 @@
 import { apiFetch, ApiError } from '@/lib/api';
 import { Student } from '@/types';
+import { useAuthStore } from '@/store/authStore';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,12 +77,26 @@ export class StudentService {
    * Returns the new student ID plus auto-generated login credentials.
    */
   static async createStudent(
-    schoolId: string,
-    studentData: Omit<Student, 'id' | 'schoolId' | 'createdAt' | 'updatedAt'>
+    studentData: Omit<Student, 'id' | 'schoolId' | 'classId' | 'createdAt' | 'updatedAt'>,
+    classId: string
   ): Promise<{ id: string; credentials: { username: string; email: string; password: string } }> {
+    const schoolId = useAuthStore.getState().getCurrentSchoolId();
+    if (!schoolId) {
+      throw new Error('No active school selected. Cannot create student.');
+    }
+    if (!classId) {
+      throw new Error('classId is required to create a student.');
+    }
+
+    const payload = {
+      ...studentData,
+      schoolId,
+      classId,
+    };
+
     const raw = await apiFetch<Record<string, unknown>>('/students', {
       method: 'POST',
-      body: JSON.stringify(studentData),
+      body: JSON.stringify(payload),
     });
     return {
       id: raw.id as string,
