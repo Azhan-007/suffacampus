@@ -24,6 +24,44 @@ import { Errors } from "../../errors";
 
 const preHandler = [authenticate, tenantGuard];
 
+// Backward compatibility: older clients can send sections as string[]
+// and may include unsupported fields (e.g. studentsCount) in section objects.
+function normalizeCreateClassBody(rawBody: unknown): unknown {
+  if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) return rawBody;
+
+  const body = rawBody as Record<string, unknown>;
+  if (!Array.isArray(body.sections)) return rawBody;
+
+  const classCapacity = typeof body.capacity === "number" ? body.capacity : 0;
+
+  const normalizedSections = body.sections.map((section) => {
+    if (typeof section === "string") {
+      return {
+        sectionName: section.trim(),
+        capacity: classCapacity,
+      };
+    }
+
+    if (!section || typeof section !== "object" || Array.isArray(section)) {
+      return section;
+    }
+
+    const rawSection = section as Record<string, unknown>;
+    return {
+      ...(typeof rawSection.id === "string" ? { id: rawSection.id } : {}),
+      ...(typeof rawSection.sectionName === "string" ? { sectionName: rawSection.sectionName } : {}),
+      capacity: typeof rawSection.capacity === "number" ? rawSection.capacity : classCapacity,
+      ...(typeof rawSection.teacherId === "string" ? { teacherId: rawSection.teacherId } : {}),
+      ...(typeof rawSection.teacherName === "string" ? { teacherName: rawSection.teacherName } : {}),
+    };
+  });
+
+  return {
+    ...body,
+    sections: normalizedSections,
+  };
+}
+
 export default async function classRoutes(server: FastifyInstance) {
   // POST /classes — create a class
   server.post(
@@ -36,7 +74,8 @@ export default async function classRoutes(server: FastifyInstance) {
       ],
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const result = createClassSchema.safeParse(request.body);
+      const normalizedBody = normalizeCreateClassBody(request.body);
+      const result = createClassSchema.safeParse(normalizedBody);
       if (!result.success) throw Errors.validation(result.error.flatten().fieldErrors);
 
       const cls = await createClass(request.schoolId, result.data, request.user.uid);

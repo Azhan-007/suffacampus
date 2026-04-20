@@ -268,6 +268,24 @@ describe("POST /classes", () => {
     expect(body.data.grade).toBe(10);
   });
 
+  it("accepts legacy string sections payload and normalizes it", async () => {
+    setupAuthUser();
+    seedSchool();
+
+    const res = await server.inject({
+      method: "POST", url: "/classes",
+      headers: { authorization: "Bearer token" },
+      payload: validClassPayload({ sections: ["A"] }),
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(Array.isArray(body.data.sections)).toBe(true);
+    expect(body.data.sections[0].sectionName).toBe("A");
+    expect(body.data.sections[0].capacity).toBe(40);
+  });
+
   it("returns 400 for missing required fields", async () => {
     setupAuthUser();
     seedSchool();
