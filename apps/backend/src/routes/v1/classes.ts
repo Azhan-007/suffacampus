@@ -24,9 +24,41 @@ import { Errors } from "../../errors";
 
 const preHandler = [authenticate, tenantGuard];
 
-// Backward compatibility: older clients can send sections as string[]
-// and may include unsupported fields (e.g. studentsCount) in section objects.
-function normalizeCreateClassBody(rawBody: unknown): unknown {
+// Backward compatibility: stale clients may send section payloads with
+// unsupported fields (for example studentsCount) or sections as string[].
+function normalizeTeacherField(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeSectionInput(section: unknown, fallbackCapacity: number): unknown {
+  if (typeof section === "string") {
+    return {
+      sectionName: section.trim(),
+      capacity: fallbackCapacity,
+    };
+  }
+
+  if (!section || typeof section !== "object" || Array.isArray(section)) return section;
+
+  const rawSection = section as Record<string, unknown>;
+  const capacity = typeof rawSection.capacity === "number" ? rawSection.capacity : fallbackCapacity;
+  const normalizedTeacherId = normalizeTeacherField(rawSection.teacherId);
+  const normalizedTeacherName = normalizeTeacherField(rawSection.teacherName);
+
+  return {
+    ...(typeof rawSection.id === "string" && rawSection.id.trim().length > 0 ? { id: rawSection.id.trim() } : {}),
+    ...(typeof rawSection.sectionName === "string" ? { sectionName: rawSection.sectionName.trim() } : {}),
+    ...(typeof capacity === "number" ? { capacity } : {}),
+    ...(normalizedTeacherId !== undefined ? { teacherId: normalizedTeacherId } : {}),
+    ...(normalizedTeacherName !== undefined ? { teacherName: normalizedTeacherName } : {}),
+  };
+}
+
+function normalizeClassBodyWithSections(rawBody: unknown): unknown {
   if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) return rawBody;
 
   const body = rawBody as Record<string, unknown>;
@@ -34,32 +66,29 @@ function normalizeCreateClassBody(rawBody: unknown): unknown {
 
   const classCapacity = typeof body.capacity === "number" ? body.capacity : 0;
 
-  const normalizedSections = body.sections.map((section) => {
-    if (typeof section === "string") {
-      return {
-        sectionName: section.trim(),
-        capacity: classCapacity,
-      };
-    }
-
-    if (!section || typeof section !== "object" || Array.isArray(section)) {
-      return section;
-    }
-
-    const rawSection = section as Record<string, unknown>;
-    return {
-      ...(typeof rawSection.id === "string" ? { id: rawSection.id } : {}),
-      ...(typeof rawSection.sectionName === "string" ? { sectionName: rawSection.sectionName } : {}),
-      capacity: typeof rawSection.capacity === "number" ? rawSection.capacity : classCapacity,
-      ...(typeof rawSection.teacherId === "string" ? { teacherId: rawSection.teacherId } : {}),
-      ...(typeof rawSection.teacherName === "string" ? { teacherName: rawSection.teacherName } : {}),
-    };
-  });
+  const normalizedSections = body.sections.map((section) => normalizeSectionInput(section, classCapacity));
 
   return {
     ...body,
     sections: normalizedSections,
   };
+}
+
+function normalizeCreateClassBody(rawBody: unknown): unknown {
+  return normalizeClassBodyWithSections(rawBody);
+}
+
+function normalizeUpdateClassBody(rawBody: unknown): unknown {
+  return normalizeClassBodyWithSections(rawBody);
+}
+
+function normalizeAddSectionBody(rawBody: unknown): unknown {
+  return normalizeSectionInput(rawBody, 0);
+}
+
+function hasClassUpdateFields(rawBody: unknown): boolean {
+  if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) return false;
+  return Object.keys(rawBody).length > 0;
 }
 
 export default async function classRoutes(server: FastifyInstance) {
@@ -120,9 +149,20 @@ export default async function classRoutes(server: FastifyInstance) {
     "/classes/:id",
     { preHandler: [...preHandler, roleMiddleware(["Admin", "SuperAdmin"])] },
     async (request, reply) => {
-      const result = updateClassSchema.safeParse(request.body);
-      if (!result.success) throw Errors.validation(result.error.flatten().fieldErrors);
-      if (Object.keys(result.data).length === 0) throw Errors.badRequest("No fields to update");
+      const normalizedBody = normalizeUpdateClassBody(request.body);
+      if (!hasClassUpdateFields(normalizedBody)) {
+        throw Errors.badRequest("No fields to update");
+      }
+
+      const result = updateClassSchema.safeParse(normalizedBody);
+      if (!result.success) {
+        const flattened = result.error.flatten();
+        const details =
+          flattened.formErrors.length > 0
+            ? { ...flattened.fieldErrors, _form: flattened.formErrors }
+            : flattened.fieldErrors;
+        throw Errors.validation(details);
+      }
 
       const cls = await updateClass(request.params.id, request.schoolId, result.data, request.user.uid);
       return sendSuccess(request, reply, cls);
@@ -145,7 +185,8 @@ export default async function classRoutes(server: FastifyInstance) {
     "/classes/:id/sections",
     { preHandler: [...preHandler, roleMiddleware(["Admin", "SuperAdmin"])] },
     async (request, reply) => {
-      const result = addSectionSchema.safeParse(request.body);
+      const normalizedBody = normalizeAddSectionBody(request.body);
+      const result = addSectionSchema.safeParse(normalizedBody);
       if (!result.success) throw Errors.validation(result.error.flatten().fieldErrors);
 
       const cls = await addSection(request.params.id, request.schoolId, result.data, request.user.uid);

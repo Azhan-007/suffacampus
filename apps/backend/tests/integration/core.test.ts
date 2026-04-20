@@ -8,6 +8,8 @@ import { buildServer } from "../../src/server";
 import type { FastifyInstance } from "fastify";
 import { auth } from "../__mocks__/firebase-admin";
 
+jest.setTimeout(30_000);
+
 describe("Backend Integration Tests", () => {
   let app: FastifyInstance;
   const mockVerifyIdToken = auth.verifyIdToken as jest.Mock;

@@ -43,7 +43,7 @@
     "bullmq": "^5.73.0",
     "dotenv": "^17.3.1",
     "fastify": "^5.7.4",
-    "firebase-admin": "^13.6.1",
+    "firebase-admin": "^13.8.0",
     "ioredis": "^5.10.1",
     "jsonwebtoken": "^9.0.2",
     "node-cache": "^5.1.2",
@@ -71,5 +71,10 @@
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0"
+  },
+  "overrides": {
+    "teeny-request": "10.1.2",
+    "retry-request": "8.0.2",
+    "http-proxy-agent": "9.0.0"
   }
 }

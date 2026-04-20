@@ -518,6 +518,14 @@ export interface AdminCredentials {
   uid: string;
 }
 
+export interface AdminProvisioningResult {
+  requested: boolean;
+  status: "not_requested" | "created" | "failed";
+  email?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 function generateSchoolCode(name: string): string {
   const prefix = name.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 4);
   const suffix = Math.floor(1000 + Math.random() * 9000);
@@ -759,6 +767,17 @@ export async function createSchool(
   }
 
   // Auto-create admin user
+  const adminProvisioning: AdminProvisioningResult = data.adminEmail
+    ? {
+      requested: true,
+      status: "failed",
+      email: data.adminEmail,
+    }
+    : {
+      requested: false,
+      status: "not_requested",
+    };
+
   let adminCredentials: AdminCredentials | undefined;
   if (data.adminEmail) {
     const adminPassword = data.adminPassword || crypto.randomBytes(9).toString("base64url");
@@ -793,6 +812,7 @@ export async function createSchool(
         displayName: adminName,
         uid: userRecord.uid,
       };
+      adminProvisioning.status = "created";
 
       try {
         await writeAuditLog("CREATE_ADMIN", performedBy, schoolId, {
@@ -802,8 +822,23 @@ export async function createSchool(
       } catch (error) {
         log.warn({ err: error, schoolId }, "Skipping CREATE_ADMIN audit write");
       }
-    } catch (err: any) {
-      log.error({ err }, "Failed to auto-create admin user");
+    } catch (err: unknown) {
+      const errorCode =
+        typeof err === "object" &&
+          err !== null &&
+          "code" in err &&
+          typeof (err as { code?: unknown }).code === "string"
+          ? (err as { code: string }).code
+          : "unknown";
+      const errorMessage = err instanceof Error ? err.message : "Failed to create admin user";
+
+      adminProvisioning.errorCode = errorCode;
+      adminProvisioning.errorMessage = errorMessage;
+
+      log.error(
+        { err, schoolId, adminEmail: data.adminEmail, errorCode },
+        "Failed to auto-create admin user"
+      );
     }
   }
 
@@ -816,6 +851,7 @@ export async function createSchool(
     autoRenew: schoolAutoRenew,
     currency: schoolCurrency,
     adminCredentials,
+    adminProvisioning,
   };
 }
 

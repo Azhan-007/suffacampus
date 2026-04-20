@@ -1,7 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { auth } from '@/lib/firebase';
 import { PUBLIC_API_URL } from '@/lib/runtime-config';
-import { getSessionAccessToken } from '@/lib/session-token';
+import { getSessionAccessToken, setSessionAccessToken } from '@/lib/session-token';
 import { useAuthStore } from '@/store/authStore';
 import { SchoolSettings } from '@/types';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -191,7 +191,40 @@ export class SettingsService {
    * Upload school logo — backend: POST /uploads/photos (multipart)
    */
   static async uploadLogo(file: File): Promise<string> {
-    const token = getSessionAccessToken();
+    let token = getSessionAccessToken();
+
+    if (!token) {
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        const firebaseIdToken = await currentUser.getIdToken(true);
+
+        const bootstrapRes = await fetch(`${PUBLIC_API_URL}/auth/login`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${firebaseIdToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        });
+
+        if (bootstrapRes.ok) {
+          const bootstrapBody = (await bootstrapRes.json().catch(() => ({}))) as {
+            accessToken?: string;
+            data?: {
+              accessToken?: string;
+            };
+          };
+          token = bootstrapBody.data?.accessToken ?? bootstrapBody.accessToken ?? null;
+          if (token) {
+            setSessionAccessToken(token);
+          }
+        }
+      }
+    }
+
+    if (!token) {
+      throw new Error('Session initialization failed. Please sign in again.');
+    }
 
     const formData = new FormData();
     formData.append('file', file);

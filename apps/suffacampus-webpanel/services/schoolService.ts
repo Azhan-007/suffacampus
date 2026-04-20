@@ -51,6 +51,25 @@ export const PLAN_LIMITS: Record<
   },
 };
 
+export interface AdminProvisioningResult {
+  requested: boolean;
+  status: 'not_requested' | 'created' | 'failed';
+  email?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface CreateSchoolResult {
+  id: string;
+  adminCredentials?: {
+    email: string;
+    password: string;
+    displayName: string;
+    uid: string;
+  };
+  adminProvisioning?: AdminProvisioningResult;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -146,7 +165,7 @@ export class SchoolService {
    */
   static async createSchool(
     data: Record<string, unknown>
-  ): Promise<{ id: string; adminCredentials?: { email: string; password: string; displayName: string; uid: string } }> {
+  ): Promise<CreateSchoolResult> {
     const raw = await apiFetch<Record<string, unknown>>('/admin/schools', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -154,6 +173,7 @@ export class SchoolService {
     return {
       id: raw.id as string,
       adminCredentials: raw.adminCredentials as { email: string; password: string; displayName: string; uid: string } | undefined,
+      adminProvisioning: raw.adminProvisioning as AdminProvisioningResult | undefined,
     };
   }
 

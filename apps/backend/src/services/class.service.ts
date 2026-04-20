@@ -105,18 +105,123 @@ export async function updateClass(
 ) {
   assertSchoolScope(schoolId);
 
-  const existing = await prisma.class.findUnique({ where: { id: classId } });
+  const existing = await prisma.class.findUnique({
+    where: { id: classId },
+    include: { sections: true },
+  });
 
   if (!existing) throw Errors.notFound("Class", classId);
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
   if (!existing.isActive) throw Errors.notFound("Class", classId);
 
+  // When sections are provided, perform an ID-aware diff update to avoid
+  // resetting counters and changing IDs for existing sections.
+  if (data.sections !== undefined) {
+    const currentSections = existing.sections;
+    const currentById = new Map(currentSections.map((section) => [section.id, section]));
+    const hasExistingSections = currentSections.length > 0;
+
+    if (hasExistingSections) {
+      for (const incomingSection of data.sections) {
+        if (typeof incomingSection.id !== "string" || incomingSection.id.trim().length === 0) {
+          throw Errors.badRequest("Section id is required for section updates");
+        }
+      }
+
+      const unknownSectionIds = data.sections
+        .map((section) => section.id!.trim())
+        .filter((sectionId) => !currentById.has(sectionId));
+
+      if (unknownSectionIds.length > 0) {
+        throw Errors.badRequest("Unknown section id in update payload", {
+          sectionIds: unknownSectionIds,
+        });
+      }
+    }
+
+    const matchedSectionIds = new Set<string>();
+
+    for (const incomingSection of data.sections) {
+      const normalizedId =
+        typeof incomingSection.id === "string" ? incomingSection.id.trim() : "";
+      const existingSection =
+        normalizedId.length > 0 ? currentById.get(normalizedId) : undefined;
+
+      if (existingSection) {
+        matchedSectionIds.add(existingSection.id);
+
+        const sectionUpdateData: Partial<SectionInput> = {
+          ...(incomingSection.sectionName !== existingSection.sectionName
+            ? { sectionName: incomingSection.sectionName }
+            : {}),
+          ...(incomingSection.capacity !== existingSection.capacity
+            ? { capacity: incomingSection.capacity }
+            : {}),
+        };
+
+        const hasTeacherId = Object.prototype.hasOwnProperty.call(incomingSection, "teacherId");
+        if (
+          hasTeacherId
+          && incomingSection.teacherId !== undefined
+          && incomingSection.teacherId !== existingSection.teacherId
+        ) {
+          sectionUpdateData.teacherId = incomingSection.teacherId;
+        }
+
+        const hasTeacherName = Object.prototype.hasOwnProperty.call(incomingSection, "teacherName");
+        if (
+          hasTeacherName
+          && incomingSection.teacherName !== undefined
+          && incomingSection.teacherName !== existingSection.teacherName
+        ) {
+          sectionUpdateData.teacherName = incomingSection.teacherName;
+        }
+
+        if (Object.keys(sectionUpdateData).length > 0) {
+          await prisma.section.update({
+            where: { id: existingSection.id },
+            data: sectionUpdateData,
+          });
+        }
+
+        continue;
+      }
+
+      await prisma.section.create({
+        data: {
+          classId,
+          sectionName: incomingSection.sectionName,
+          capacity: incomingSection.capacity,
+          teacherId: incomingSection.teacherId,
+          teacherName: incomingSection.teacherName,
+          studentsCount: 0,
+        },
+      });
+    }
+
+    if (hasExistingSections) {
+      const removedSectionIds = currentSections
+        .filter((section) => !matchedSectionIds.has(section.id))
+        .map((section) => section.id);
+
+      if (removedSectionIds.length > 0) {
+        await prisma.section.deleteMany({
+          where: {
+            classId,
+            id: { in: removedSectionIds },
+          },
+        });
+      }
+    }
+  }
+
   const updated = await prisma.class.update({
     where: { id: classId },
     data: {
-      className: data.className,
-      grade: data.grade,
-      capacity: data.capacity,
+      ...(data.className !== undefined ? { className: data.className } : {}),
+      ...(data.grade !== undefined ? { grade: data.grade } : {}),
+      ...(data.capacity !== undefined ? { capacity: data.capacity } : {}),
+      ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
     },
     include: { sections: true },
   });

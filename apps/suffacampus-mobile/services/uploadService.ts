@@ -8,7 +8,7 @@
  */
 
 import { auth } from "../firebase";
-import { BASE_URL, fetchWithTimeout } from "./api";
+import { BASE_URL, fetchWithTimeout, getSessionAccessToken } from "./api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ export async function uploadFile(
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
 
-  const token = await user.getIdToken();
+  const token = await getSessionAccessToken();
 
   const formData = new FormData();
   (formData as any).append("file", { uri, name, type: mimeType } as any);

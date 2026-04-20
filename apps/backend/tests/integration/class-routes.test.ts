@@ -128,6 +128,13 @@ jest.mock("../../src/lib/prisma", () => ({
         mockState.sections.set(sectionId, section);
         return section;
       }),
+      update: jest.fn(async ({ where: { id }, data }) => {
+        const existing = mockState.sections.get(id);
+        if (!existing) throw new Error("Section not found");
+        const updated = { ...existing, ...data };
+        mockState.sections.set(id, updated);
+        return updated;
+      }),
       findUnique: jest.fn(async ({ where: { id } }) => mockState.sections.get(id) ?? null),
       findFirst: jest.fn(async ({ where }) => {
         return (
@@ -150,7 +157,9 @@ jest.mock("../../src/lib/prisma", () => ({
       deleteMany: jest.fn(async ({ where }) => {
         let count = 0;
         for (const [id, section] of mockState.sections.entries()) {
-          if (where?.id && section.id !== where.id) continue;
+          const idFilter = where?.id;
+          if (typeof idFilter === "string" && section.id !== idFilter) continue;
+          if (idFilter?.in && Array.isArray(idFilter.in) && !idFilter.in.includes(section.id)) continue;
           if (where?.classId && section.classId !== where.classId) continue;
           if (where?.class?.schoolId) {
             const classRecord = mockState.classes.get(section.classId);
@@ -198,6 +207,13 @@ function validClassPayload(overrides: Record<string, unknown> = {}) {
 }
 
 function seedClass(id: string, schoolId = "school_1", overrides: Record<string, unknown> = {}) {
+  const sectionOverrides = Array.isArray((overrides as { sections?: unknown }).sections)
+    ? ((overrides as { sections?: unknown[] }).sections ?? [])
+    : [];
+  const { sections: _sections, ...classOverrides } = overrides as Record<string, unknown> & {
+    sections?: unknown[];
+  };
+
   mockState.classes.set(id, {
     id,
     schoolId,
@@ -207,17 +223,22 @@ function seedClass(id: string, schoolId = "school_1", overrides: Record<string, 
     isActive: true,
     createdAt: new Date(),
     updatedAt: new Date(),
-    ...overrides,
+    ...classOverrides,
   });
 
-  const sectionId = overrides.sections && Array.isArray(overrides.sections)
-    ? (overrides.sections[0] as any).id ?? `sec_${mockState.sectionCounter++}`
+  const firstSection = (sectionOverrides[0] ?? {}) as Record<string, unknown>;
+  const sectionId = typeof firstSection.id === "string"
+    ? firstSection.id
     : `sec_${mockState.sectionCounter++}`;
+
   mockState.sections.set(sectionId, {
     id: sectionId,
     classId: id,
-    sectionName: "A",
-    capacity: 40,
+    sectionName: typeof firstSection.sectionName === "string" ? firstSection.sectionName : "A",
+    capacity: typeof firstSection.capacity === "number" ? firstSection.capacity : 40,
+    studentsCount: typeof firstSection.studentsCount === "number" ? firstSection.studentsCount : 0,
+    teacherId: typeof firstSection.teacherId === "string" ? firstSection.teacherId : undefined,
+    teacherName: typeof firstSection.teacherName === "string" ? firstSection.teacherName : undefined,
   });
 }
 
@@ -439,6 +460,208 @@ describe("PATCH /classes/:id", () => {
     expect(JSON.parse(res.body).data.className).toBe("Updated Class");
   });
 
+  it("returns 400 for empty payload", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1");
+
+    const res = await server.inject({
+      method: "PATCH", url: "/classes/cls_1",
+      headers: { authorization: "Bearer token" },
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("returns 400 when sections array is empty", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1");
+
+    const res = await server.inject({
+      method: "PATCH", url: "/classes/cls_1",
+      headers: { authorization: "Bearer token" },
+      payload: { sections: [] },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("preserves studentsCount when updating existing section by id", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1", "school_1", {
+      sections: [{ id: "sec_keep", sectionName: "A", capacity: 40, studentsCount: 23 }],
+    });
+
+    const res = await server.inject({
+      method: "PATCH", url: "/classes/cls_1",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        sections: [{ id: "sec_keep", sectionName: "A", capacity: 45 }],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    const updatedSection = body.data.sections.find((section: { id: string }) => section.id === "sec_keep");
+    expect(updatedSection).toBeTruthy();
+    expect(updatedSection.capacity).toBe(45);
+    expect(updatedSection.studentsCount).toBe(23);
+  });
+
+  it("preserves section IDs for existing sections during update", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1", "school_1", {
+      sections: [{ id: "sec_stable", sectionName: "A", capacity: 40, studentsCount: 7 }],
+    });
+
+    const res = await server.inject({
+      method: "PATCH", url: "/classes/cls_1",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        sections: [{ id: "sec_stable", sectionName: "A", capacity: 40, teacherName: "Ms Rao" }],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    const updatedSection = body.data.sections.find((section: { id: string }) => section.id === "sec_stable");
+    expect(updatedSection).toBeTruthy();
+    expect(updatedSection.id).toBe("sec_stable");
+    expect(updatedSection.teacherName).toBe("Ms Rao");
+    expect(updatedSection.studentsCount).toBe(7);
+  });
+
+  it("clears teacher assignment when teacher fields are null", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1", "school_1", {
+      sections: [{
+        id: "sec_teacher",
+        sectionName: "A",
+        capacity: 40,
+        studentsCount: 9,
+        teacherId: "TCH-100",
+        teacherName: "Ms Rao",
+      }],
+    });
+
+    const res = await server.inject({
+      method: "PATCH", url: "/classes/cls_1",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        sections: [{
+          id: "sec_teacher",
+          sectionName: "A",
+          capacity: 40,
+          teacherId: null,
+          teacherName: null,
+        }],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    const updatedSection = body.data.sections.find((section: { id: string }) => section.id === "sec_teacher");
+    expect(updatedSection).toBeTruthy();
+    expect(updatedSection.teacherId).toBeNull();
+    expect(updatedSection.teacherName).toBeNull();
+
+    const storedSection = mockState.sections.get("sec_teacher");
+    expect(storedSection.teacherId).toBeNull();
+    expect(storedSection.teacherName).toBeNull();
+  });
+
+  it("normalizes empty teacher fields to null", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1", "school_1", {
+      sections: [{
+        id: "sec_teacher_empty",
+        sectionName: "A",
+        capacity: 40,
+        studentsCount: 11,
+        teacherId: "TCH-101",
+        teacherName: "Mr Khan",
+      }],
+    });
+
+    const res = await server.inject({
+      method: "PATCH", url: "/classes/cls_1",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        sections: [{
+          id: "sec_teacher_empty",
+          sectionName: "A",
+          capacity: 40,
+          teacherId: "",
+          teacherName: "   ",
+        }],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    const updatedSection = body.data.sections.find((section: { id: string }) => section.id === "sec_teacher_empty");
+    expect(updatedSection).toBeTruthy();
+    expect(updatedSection.teacherId).toBeNull();
+    expect(updatedSection.teacherName).toBeNull();
+
+    const storedSection = mockState.sections.get("sec_teacher_empty");
+    expect(storedSection.teacherId).toBeNull();
+    expect(storedSection.teacherName).toBeNull();
+  });
+
+  it("returns 400 when renaming section without id", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1", "school_1", {
+      sections: [{ id: "sec_rename", sectionName: "A", capacity: 40, studentsCount: 12 }],
+    });
+
+    const res = await server.inject({
+      method: "PATCH", url: "/classes/cls_1",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        sections: [{ sectionName: "A1", capacity: 40 }],
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("normalizes section payloads with unsupported fields", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1");
+
+    const res = await server.inject({
+      method: "PATCH", url: "/classes/cls_1",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        sections: [
+          {
+            id: "sec_1",
+            sectionName: "B",
+            capacity: 35,
+            teacherName: "Ms Rao",
+            studentsCount: 99,
+          },
+        ],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(body.data.sections[0].sectionName).toBe("B");
+    expect(body.data.sections[0].capacity).toBe(35);
+    expect(body.data.sections[0].studentsCount).toBe(0);
+  });
+
   it("rejects Teacher role", async () => {
     setupAuthUser("Teacher");
     seedSchool();
@@ -504,6 +727,23 @@ describe("POST /classes/:id/sections", () => {
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.body);
     expect(body.success).toBe(true);
+  });
+
+  it("accepts section payloads with unsupported fields", async () => {
+    setupAuthUser();
+    seedSchool();
+    seedClass("cls_1");
+
+    const res = await server.inject({
+      method: "POST", url: "/classes/cls_1/sections",
+      headers: { authorization: "Bearer token" },
+      payload: { sectionName: "C", capacity: 30, studentsCount: 12 },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(body.data.sections.some((section: { sectionName: string }) => section.sectionName === "C")).toBe(true);
   });
 
   it("returns 400 for missing sectionName", async () => {

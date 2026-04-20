@@ -101,7 +101,7 @@ export function paymentReceivedEmail(
 }
 
 export function paymentFailedEmail(schoolName: string, retryCount: number) {
-  const subject = `âš ï¸ Payment failed â€” action required`;
+  const subject = `WARNING: Payment failed â€” action required`;
   const html = layout(subject, `
     <h2>Payment Failed</h2>
     <p>Hi ${schoolName} Admin,</p>
@@ -145,7 +145,7 @@ export function usageLimitWarningEmail(
   limit: number
 ) {
   const percentage = Math.round((current / limit) * 100);
-  const subject = `âš ï¸ ${percentage}% of ${resource} limit used`;
+  const subject = `WARNING: ${percentage}% of ${resource} limit used`;
   const html = layout(subject, `
     <h2>Usage Limit Warning</h2>
     <p>Hi ${schoolName} Admin,</p>

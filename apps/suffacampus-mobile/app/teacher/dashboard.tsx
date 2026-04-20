@@ -19,8 +19,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Card from "../../components/Card";
 import Section from "../../components/Section";
+import { auth } from "../../firebase";
 import { getCarouselItems } from "../../services/carouselService";
 import { getEvents } from "../../services/eventsService";
+import { clearSessionAccessToken } from "../../services/api";
 import { getSchedules } from "../../services/scheduleService";
 import { getTeacherActivities, getTeacherPendingTasks, getTeacherProfile } from "../../services/teacherService";
 
@@ -272,7 +274,25 @@ export default function TeacherDashboard() {
   };
 
   const handleLogout = async () => {
-    await AsyncStorage.removeItem("role");
+    try {
+      await auth.signOut();
+    } catch (error) {
+      console.warn("Logout signOut error:", error);
+    }
+
+    await AsyncStorage.multiRemove([
+      "role",
+      "userEmail",
+      "userName",
+      "username",
+      "userId",
+      "studentId",
+      "teacherId",
+      "schoolId",
+      "schoolCode",
+      "schoolName",
+    ]);
+    await clearSessionAccessToken();
     router.replace("/login" as any);
   };
 

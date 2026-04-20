@@ -1,12 +1,12 @@
 import { apiFetch, ApiError } from '@/lib/api';
 import { Class, Section } from '@/types';
 
-type CreateSectionPayload = {
+type SectionPayload = {
   id?: string;
   sectionName: string;
   capacity: number;
-  teacherId?: string;
-  teacherName?: string;
+  teacherId?: string | null;
+  teacherName?: string | null;
 };
 
 type CreateClassPayload = {
@@ -14,8 +14,16 @@ type CreateClassPayload = {
   grade: number;
   capacity: number;
   isActive: boolean;
-  sections: CreateSectionPayload[];
+  sections: SectionPayload[];
 };
+
+type UpdateClassPayload = Partial<{
+  className: string;
+  grade: number;
+  capacity: number;
+  isActive: boolean;
+  sections: SectionPayload[];
+}>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,6 +39,29 @@ function toDate(value: unknown): Date {
     if ('_seconds' in v) return new Date(v._seconds * 1000);
   }
   return new Date(0);
+}
+
+function toTeacherFieldValue(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== 'string') return undefined;
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function toSectionPayload(section: Partial<Section> | SectionPayload): SectionPayload {
+  const sectionName = typeof section.sectionName === 'string' ? section.sectionName.trim() : '';
+  const capacity = typeof section.capacity === 'number' ? section.capacity : Number(section.capacity ?? 0);
+  const teacherId = toTeacherFieldValue(section.teacherId);
+  const teacherName = toTeacherFieldValue(section.teacherName);
+
+  return {
+    ...(typeof section.id === 'string' && section.id.trim().length > 0 ? { id: section.id.trim() } : {}),
+    sectionName,
+    capacity,
+    ...(teacherId !== undefined ? { teacherId } : {}),
+    ...(teacherName !== undefined ? { teacherName } : {}),
+  };
 }
 
 function deserializeClass(raw: Record<string, unknown>): Class {
@@ -81,7 +112,10 @@ export const createClass = async (
 ): Promise<string> => {
   const raw = await apiFetch<Record<string, unknown>>('/classes', {
     method: 'POST',
-    body: JSON.stringify(data),
+    body: JSON.stringify({
+      ...data,
+      sections: data.sections.map(toSectionPayload),
+    }),
   });
   return raw.id as string;
 };
@@ -91,11 +125,15 @@ export const createClass = async (
  */
 export const updateClass = async (
   id: string,
-  data: Partial<Omit<Class, 'id' | 'createdAt' | 'updatedAt'>>
+  data: UpdateClassPayload
 ): Promise<void> => {
+  const payload = data.sections
+    ? { ...data, sections: data.sections.map(toSectionPayload) }
+    : data;
+
   await apiFetch(`/classes/${id}`, {
     method: 'PATCH',
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
 };
 
@@ -111,11 +149,11 @@ export const deleteClass = async (id: string): Promise<void> => {
  */
 export const addSection = async (
   classId: string,
-  section: Section
+  section: SectionPayload | Section
 ): Promise<void> => {
   await apiFetch(`/classes/${classId}/sections`, {
     method: 'POST',
-    body: JSON.stringify(section),
+    body: JSON.stringify(toSectionPayload(section)),
   });
 };
 
@@ -133,7 +171,7 @@ export const updateSection = async (
   if (!classData) throw new Error('Class not found');
 
   const updatedSections = classData.sections.map((s) =>
-    s.id === sectionId ? { ...s, ...data } : s
+    s.id === sectionId ? toSectionPayload({ ...s, ...data }) : toSectionPayload(s)
   );
   await updateClass(classId, { sections: updatedSections });
 };

@@ -2,11 +2,13 @@
  * API Helper — wraps all HTTP requests to the Fastify backend.
  *
  * Architecture rules:
- *  - Firebase Auth stays client-side (uses ID token for every request).
+ *  - Firebase Auth stays client-side.
+ *  - Protected API calls use backend session JWTs from /auth/login.
  *  - Firestore client SDK is NOT used here or anywhere in the services layer.
  *  - All data reads/writes go through the backend URL below.
  */
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { auth } from "../firebase";
 import Constants from "expo-constants";
 
@@ -17,6 +19,8 @@ const MAX_RETRIES = 1;
 const RETRY_BASE_MS = 500;
 const RETRYABLE_STATUSES = new Set([408, 502, 503, 504]);
 const DEFAULT_TESTING_API_URL = "https://suffacampus-backend-new.onrender.com/api/v1";
+const SESSION_TOKEN_STORAGE_KEY = "SuffaCampus-session-access-token";
+const SESSION_TOKEN_UID_STORAGE_KEY = "SuffaCampus-session-access-token-uid";
 
 /**
  * Wraps `fetch` with an AbortController timeout.
@@ -106,55 +110,157 @@ interface ApiFetchOptions {
   params?: Record<string, string | number | boolean | undefined | null>;
 }
 
-type TokenCache = {
+type SessionTokenCache = {
   uid: string;
   token: string;
-  fetchedAtMs: number;
 };
 
-let tokenCache: TokenCache | null = null;
-let inflightTokenPromise: Promise<string> | null = null;
-const TOKEN_REUSE_WINDOW_MS = 60_000;
+let sessionTokenCache: SessionTokenCache | null = null;
+let inflightSessionPromise: Promise<string> | null = null;
 
-async function getAuthToken(): Promise<string> {
+async function persistSessionAccessToken(uid: string, token: string): Promise<void> {
+  sessionTokenCache = { uid, token };
+  await AsyncStorage.multiSet([
+    [SESSION_TOKEN_STORAGE_KEY, token],
+    [SESSION_TOKEN_UID_STORAGE_KEY, uid],
+  ]);
+}
+
+export async function clearSessionAccessToken(): Promise<void> {
+  sessionTokenCache = null;
+  await AsyncStorage.multiRemove([
+    SESSION_TOKEN_STORAGE_KEY,
+    SESSION_TOKEN_UID_STORAGE_KEY,
+  ]);
+}
+
+async function readStoredSessionAccessToken(uid: string): Promise<string | null> {
+  const pairs = await AsyncStorage.multiGet([
+    SESSION_TOKEN_STORAGE_KEY,
+    SESSION_TOKEN_UID_STORAGE_KEY,
+  ]);
+
+  const token = pairs[0]?.[1] ?? null;
+  const storedUid = pairs[1]?.[1] ?? null;
+
+  if (!token || storedUid !== uid) {
+    return null;
+  }
+
+  return token;
+}
+
+async function getCachedSessionAccessToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) {
+    await clearSessionAccessToken();
+    return null;
+  }
+
+  if (sessionTokenCache && sessionTokenCache.uid === user.uid) {
+    return sessionTokenCache.token;
+  }
+
+  if (sessionTokenCache && sessionTokenCache.uid !== user.uid) {
+    sessionTokenCache = null;
+  }
+
+  const stored = await readStoredSessionAccessToken(user.uid);
+  if (stored) {
+    sessionTokenCache = { uid: user.uid, token: stored };
+    return stored;
+  }
+
+  return null;
+}
+
+async function bootstrapSessionAccessToken(
+  forceRefreshFirebaseToken = false
+): Promise<string> {
   const user = auth.currentUser;
   if (!user) {
     throw new Error("apiFetch: No authenticated user. Please log in first.");
   }
 
-  const now = Date.now();
-  if (tokenCache && tokenCache.uid !== user.uid) {
-    tokenCache = null;
+  if (inflightSessionPromise) {
+    return inflightSessionPromise;
   }
 
-  if (tokenCache && now - tokenCache.fetchedAtMs < TOKEN_REUSE_WINDOW_MS) {
-    return tokenCache.token;
+  inflightSessionPromise = (async () => {
+    const firebaseIdToken = await user.getIdToken(forceRefreshFirebaseToken);
+
+    const response = await fetchWithRetry(
+      `${BASE_URL}/auth/login`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${firebaseIdToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      },
+      MAX_RETRIES,
+      DEFAULT_TIMEOUT_MS
+    );
+
+    if (!response.ok) {
+      let message = `Session bootstrap failed (${response.status})`;
+      try {
+        const json = (await response.json()) as {
+          message?: string;
+          error?: {
+            message?: string;
+          };
+        };
+        message = json.error?.message ?? json.message ?? message;
+      } catch {
+        // Keep fallback status message when response body is not JSON.
+      }
+      throw new Error(message);
+    }
+
+    const body = (await response.json().catch(() => ({}))) as {
+      accessToken?: string;
+      data?: {
+        accessToken?: string;
+      };
+    };
+
+    const accessToken = body.data?.accessToken ?? body.accessToken;
+    if (!accessToken) {
+      throw new Error("Session bootstrap succeeded but no accessToken was returned.");
+    }
+
+    await persistSessionAccessToken(user.uid, accessToken);
+    return accessToken;
+  })().finally(() => {
+    inflightSessionPromise = null;
+  });
+
+  return inflightSessionPromise;
+}
+
+export async function ensureBackendSession(
+  forceRefreshFirebaseToken = false
+): Promise<string> {
+  const cached = await getCachedSessionAccessToken();
+  if (cached && !forceRefreshFirebaseToken) {
+    return cached;
   }
 
-  if (inflightTokenPromise) {
-    return inflightTokenPromise;
-  }
+  return bootstrapSessionAccessToken(forceRefreshFirebaseToken);
+}
 
-  inflightTokenPromise = user
-    .getIdToken()
-    .then((token) => {
-      tokenCache = { uid: user.uid, token, fetchedAtMs: Date.now() };
-      return token;
-    })
-    .finally(() => {
-      inflightTokenPromise = null;
-    });
-
-  return inflightTokenPromise;
+export async function getSessionAccessToken(): Promise<string> {
+  return ensureBackendSession();
 }
 
 /**
  * apiFetch — authenticated fetch wrapper.
  *
  * Automatically:
- *  1. Retrieves the current Firebase user.
- *  2. Obtains a fresh ID token via getIdToken().
- *  3. Attaches `Authorization: Bearer <token>` and `Content-Type: application/json`.
+ *  1. Ensures backend session JWT is available (bootstraps via /auth/login if needed).
+ *  2. Attaches `Authorization: Bearer <sessionToken>` and `Content-Type: application/json`.
  *  4. Throws a descriptive Error if the response is not 2xx.
  *  5. Returns the parsed JSON body.
  */
@@ -162,8 +268,6 @@ export async function apiFetch<T = unknown>(
   path: string,
   options: ApiFetchOptions = {}
 ): Promise<T> {
-  const token = await getAuthToken();
-
   // Build URL with optional query params
   let url = `${BASE_URL}${path}`;
   if (options.params) {
@@ -176,35 +280,65 @@ export async function apiFetch<T = unknown>(
 
   const method: HttpMethod = options.method ?? "GET";
 
-  const headers: HeadersInit = {
-    "Authorization": `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
+  let hasRetriedAfterSessionRefresh = false;
 
-  const fetchInit: RequestInit = { method, headers };
-  if (options.body !== undefined) {
-    fetchInit.body = JSON.stringify(options.body);
-  }
+  while (true) {
+    const sessionToken = await ensureBackendSession();
 
-  const response = await fetchWithRetry(url, fetchInit);
+    const headers: HeadersInit = {
+      "Authorization": `Bearer ${sessionToken}`,
+      "Content-Type": "application/json",
+    };
 
-  if (!response.ok) {
-    let errorMessage = `API error ${response.status}: ${response.statusText}`;
-    try {
-      const errorBody = (await response.json()) as { message?: string };
-      if (errorBody.message) errorMessage = `API error ${response.status}: ${errorBody.message}`;
-    } catch {
-      // If the error body is not JSON, use the status text message above.
+    const fetchInit: RequestInit = { method, headers };
+    if (options.body !== undefined) {
+      fetchInit.body = JSON.stringify(options.body);
     }
+
+    const response = await fetchWithRetry(url, fetchInit);
+
+    if (response.ok) {
+      if (response.status === 204) {
+        return undefined as unknown as T;
+      }
+
+      const body = await response.json();
+      // Backend wraps responses in { success, data, meta } — unwrap .data
+      return (body?.data ?? body) as T;
+    }
+
+    let errorMessage = `API error ${response.status}: ${response.statusText}`;
+    let errorCode: string | null = null;
+
+    try {
+      const errorBody = (await response.json()) as {
+        message?: string;
+        error?: {
+          message?: string;
+          code?: string;
+        };
+      };
+      errorMessage =
+        errorBody.error?.message ??
+        errorBody.message ??
+        errorMessage;
+      errorCode = errorBody.error?.code ?? null;
+    } catch {
+      // Keep status text fallback when error body is non-JSON.
+    }
+
+    const shouldRefreshSession =
+      response.status === 401 &&
+      !hasRetriedAfterSessionRefresh &&
+      (errorCode === "AUTH_TOKEN_INVALID" || errorCode === "AUTH_TOKEN_MISSING");
+
+    if (shouldRefreshSession) {
+      hasRetriedAfterSessionRefresh = true;
+      await clearSessionAccessToken();
+      await ensureBackendSession(true);
+      continue;
+    }
+
     throw new Error(errorMessage);
   }
-
-  // Handle 204 No Content
-  if (response.status === 204) {
-    return undefined as unknown as T;
-  }
-
-  // Backend wraps responses in { success, data, meta } — unwrap .data
-  const body = await response.json();
-  return (body?.data ?? body) as T;
 }

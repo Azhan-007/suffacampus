@@ -81,26 +81,13 @@ export async function getUserByUsername(
  * Change password for the current user (after forced password change).
  */
 export async function changePassword(
-  idToken: string,
+  _idToken: string,
   newPassword: string
 ): Promise<void> {
-  const response = await fetchWithTimeout(`${BASE_URL}/auth/change-password`, {
+  await apiFetch<{ message: string }>("/auth/change-password", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${idToken}`,
-    },
-    body: JSON.stringify({ newPassword }),
+    body: { newPassword },
   });
-
-  if (!response.ok) {
-    let message = `Password change failed (${response.status})`;
-    try {
-      const json = (await response.json()) as { error?: string; message?: string };
-      if (json.error || json.message) message = (json.error ?? json.message)!;
-    } catch { /* ignore */ }
-    throw new Error(message);
-  }
 }
 
 /**

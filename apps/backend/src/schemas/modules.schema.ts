@@ -8,8 +8,8 @@ export const sectionSchema = z.object({
   id: z.string().optional(), // auto-generated if not provided
   sectionName: z.string().min(1, "Section name is required").trim(),
   capacity: z.number().int().positive("Capacity must be positive"),
-  teacherId: z.string().optional(),
-  teacherName: z.string().optional(),
+  teacherId: z.string().nullable().optional(),
+  teacherName: z.string().nullable().optional(),
 }).strict();
 
 export const createClassSchema = z.object({
@@ -20,7 +20,15 @@ export const createClassSchema = z.object({
   isActive: z.boolean().default(true),
 }).strict();
 
-export const updateClassSchema = createClassSchema.partial();
+export const updateClassSchema = z.object({
+  className: z.string().min(1, "Class name is required").trim().optional(),
+  grade: z.number().int().min(1).max(12).optional(),
+  sections: z.array(sectionSchema).min(1, "At least one section is required").optional(),
+  capacity: z.number().int().positive("Capacity must be positive").optional(),
+  isActive: z.boolean().optional(),
+}).strict().refine((data) => Object.keys(data).length > 0, {
+  message: "No fields to update",
+});
 
 export const addSectionSchema = sectionSchema;
 

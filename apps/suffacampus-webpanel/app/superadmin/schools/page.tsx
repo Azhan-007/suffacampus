@@ -152,6 +152,12 @@ export default function SuperAdminSchoolsPage() {
         setAdminCredentials(result.adminCredentials);
         setShowCredentials(true);
         toast.success('School & admin created! Save the credentials below.');
+      } else if (adminEmail) {
+        const provisioningReason = result.adminProvisioning?.errorMessage;
+        const warningMessage = provisioningReason
+          ? `School created, but admin setup failed: ${provisioningReason}`
+          : 'School created, but admin setup failed. Please retry with a different admin email.';
+        toast.error(warningMessage, { duration: 10000 });
       } else {
         toast.success('School created successfully!');
       }

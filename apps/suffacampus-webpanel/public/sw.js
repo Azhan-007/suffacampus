@@ -1,9 +1,11 @@
-﻿// SuffaCampus Service Worker â€” offline shell + API cache
-const CACHE_NAME = 'SuffaCampus-v3';
-const SHELL_ASSETS = [
-  '/',
-  '/dashboard',
+﻿// SuffaCampus Service Worker - static asset caching only.
+// Navigation requests are always network-first to avoid stale HTML/chunk references.
+const CACHE_NAME = 'SuffaCampus-v4';
+const STATIC_ASSETS = [
   '/manifest.json',
+  '/favicon.png',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
 ];
 const IS_LOCALHOST =
   self.location.hostname === 'localhost' ||
@@ -20,7 +22,27 @@ function parsePushPayload(event) {
   }
 }
 
-// Install â€” pre-cache the app shell
+function isStaticAssetPath(pathname) {
+  return (
+    pathname.startsWith('/_next/static/') ||
+    pathname.startsWith('/icons/') ||
+    pathname === '/manifest.json' ||
+    pathname === '/favicon.ico' ||
+    pathname === '/favicon.png'
+  );
+}
+
+function isCacheableResponse(response) {
+  return Boolean(response) && response.ok && response.type === 'basic';
+}
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// Install - pre-cache core static assets
 self.addEventListener('install', (event) => {
   if (IS_LOCALHOST) {
     self.skipWaiting();
@@ -28,12 +50,14 @@ self.addEventListener('install', (event) => {
   }
 
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS))
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.allSettled(STATIC_ASSETS.map((asset) => cache.add(asset)))
+    )
   );
   self.skipWaiting();
 });
 
-// Activate â€” clean up old caches
+// Activate - clean up old caches
 self.addEventListener('activate', (event) => {
   if (IS_LOCALHOST) {
     event.waitUntil(
@@ -53,40 +77,82 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch â€” network-first for API, cache-first for static
+// Fetch handling
 self.addEventListener('fetch', (event) => {
   if (IS_LOCALHOST) return;
 
   const { request } = event;
-  const url = new URL(request.url);
 
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // API calls â†’ network-first with short cache fallback
+  // Work around Chrome's only-if-cached + cross-origin requests.
+  if (request.cache === 'only-if-cached' && request.mode !== 'same-origin') return;
+
+  let url;
+  try {
+    url = new URL(request.url);
+  } catch (_) {
+    return;
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+
+  // API calls should always prefer network.
+  // A cache fallback is retained only for temporary offline resilience.
   if (url.pathname.startsWith('/api/')) {
+    event.respondWith(fetch(request).catch(() => caches.match(request)));
+    return;
+  }
+
+  // Do not intercept cross-origin traffic (Firebase, analytics, etc.).
+  if (url.origin !== self.location.origin) return;
+
+  // Always fetch navigation requests from network to avoid stale HTML after deploy.
+  if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
-        .then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          return res;
-        })
-        .catch(() => caches.match(request))
+      fetch(request).catch(
+        () => new Response('Offline', { status: 503, statusText: 'Offline' })
+      )
     );
     return;
   }
 
-  // Static assets & pages â†’ stale-while-revalidate
+  // Cache-first for versioned/static app assets.
+  if (isStaticAssetPath(url.pathname)) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        const networkFetch = fetch(request)
+          .then((res) => {
+            if (isCacheableResponse(res)) {
+              const clone = res.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            }
+            return res;
+          })
+          .catch(() => cached);
+
+        return cached || networkFetch;
+      })
+    );
+    return;
+  }
+
+  // For all other same-origin GET requests, use network first and cache successful responses.
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const fetchPromise = fetch(request).then((res) => {
-        const clone = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+    fetch(request)
+      .then((res) => {
+        if (isCacheableResponse(res)) {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+        }
         return res;
-      });
-      return cached || fetchPromise;
-    })
+      })
+      .catch(async () => {
+        const cached = await caches.match(request);
+        if (cached) return cached;
+        return new Response('Offline', { status: 503, statusText: 'Offline' });
+      })
   );
 });
 

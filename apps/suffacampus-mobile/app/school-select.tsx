@@ -44,7 +44,16 @@ export default function SchoolSelect() {
         }
       } else if (savedRole && !firebaseUser) {
         // Stale session — clear it
-        await AsyncStorage.multiRemove(["role", "userEmail", "userName", "username", "userId", "studentId"]);
+        await AsyncStorage.multiRemove([
+          "role",
+          "userEmail",
+          "userName",
+          "username",
+          "userId",
+          "studentId",
+          "SuffaCampus-session-access-token",
+          "SuffaCampus-session-access-token-uid",
+        ]);
       }
     } catch (error) {
       console.warn("Session check error:", error);

@@ -64,7 +64,7 @@ export default function ClassesPage() {
   // Class form
   const [classFormData, setClassFormData] = useState({ className: '', grade: 1, capacity: 60, isActive: true });
   // Section form
-  const [sectionFormData, setSectionFormData] = useState({ id: '', sectionName: '', capacity: 60, teacherId: '', teacherName: '', studentsCount: 0 });
+  const [sectionFormData, setSectionFormData] = useState({ id: '', sectionName: '', capacity: 60, teacherId: '', teacherName: '' });
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   // Stats
@@ -155,7 +155,7 @@ export default function ClassesPage() {
 
   // â”€â”€ Form Helpers â”€â”€
   const resetClassForm = () => { setClassFormData({ className: '', grade: 1, capacity: 60, isActive: true }); setFormErrors({}); setEditingClass(null); };
-  const resetSectionForm = () => { setSectionFormData({ id: '', sectionName: '', capacity: 60, teacherId: '', teacherName: '', studentsCount: 0 }); setFormErrors({}); setEditingSection(null); };
+  const resetSectionForm = () => { setSectionFormData({ id: '', sectionName: '', capacity: 60, teacherId: '', teacherName: '' }); setFormErrors({}); setEditingSection(null); };
 
   const handleOpenClassModal = (classData?: Class) => {
     if (classData) { setEditingClass(classData); setClassFormData({ className: classData.className, grade: classData.grade, capacity: classData.capacity, isActive: classData.isActive }); }
@@ -165,8 +165,21 @@ export default function ClassesPage() {
   const handleCloseClassModal = () => { setIsClassModalOpen(false); resetClassForm(); };
 
   const handleOpenSectionModal = (classId: string, section?: Section) => {
-    if (section) { setEditingSection({ classId, section }); setSectionFormData({ ...section, teacherId: section.teacherId || '', teacherName: section.teacherName || '' }); }
-    else { setEditingSection({ classId, section: null }); resetSectionForm(); }
+    if (section) {
+      setEditingSection({ classId, section });
+      setSectionFormData({
+        id: section.id,
+        sectionName: section.sectionName,
+        capacity: section.capacity,
+        teacherId: section.teacherId || '',
+        teacherName: section.teacherName || '',
+      });
+      setFormErrors({});
+    } else {
+      setEditingSection({ classId, section: null });
+      setSectionFormData({ id: '', sectionName: '', capacity: 60, teacherId: '', teacherName: '' });
+      setFormErrors({});
+    }
     setIsSectionModalOpen(true);
   };
   const handleCloseSectionModal = () => { setIsSectionModalOpen(false); resetSectionForm(); };
@@ -223,7 +236,10 @@ export default function ClassesPage() {
         queryClient.invalidateQueries({ queryKey: ['classes'] });
         toast.success('Section updated successfully');
       } else {
-        const newSection: Section = { ...sectionFormData, id: `sec-${Date.now()}` };
+        const newSection = {
+          ...sectionFormData,
+          id: sectionFormData.id || `sec-${Date.now()}`,
+        };
         await ClassService.addSection(editingSection.classId, newSection);
         queryClient.invalidateQueries({ queryKey: ['classes'] });
         toast.success('Section added successfully');

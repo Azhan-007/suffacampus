@@ -283,6 +283,35 @@ describe("POST /admin/schools", () => {
     expect(body.data.website).toBe("https://mps.com");
   });
 
+  it("reports admin provisioning failure details when Firebase user creation fails", async () => {
+    setupAuthUser();
+    const firebaseError = Object.assign(new Error("The email address is already in use"), {
+      code: "auth/email-already-exists",
+    });
+    mockCreateUser.mockRejectedValueOnce(firebaseError);
+
+    const res = await server.inject({
+      method: "POST", url: "/admin/schools",
+      headers: { authorization: "Bearer token" },
+      payload: validSchoolPayload({
+        adminEmail: "existing-admin@newschool.com",
+        adminPassword: "StrongPass123",
+      }),
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(body.data.adminCredentials).toBeUndefined();
+    expect(body.data.adminProvisioning).toMatchObject({
+      requested: true,
+      status: "failed",
+      email: "existing-admin@newschool.com",
+      errorCode: "auth/email-already-exists",
+    });
+    expect(typeof body.data.adminProvisioning.errorMessage).toBe("string");
+  });
+
   it("returns 400 for missing required fields", async () => {
     setupAuthUser();
     const res = await server.inject({

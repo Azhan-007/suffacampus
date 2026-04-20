@@ -38,18 +38,69 @@ export function ServiceWorkerRegistration() {
     }
 
     // Register after hydration settles
+    const reloadFlag = 'suffacampus-sw-prod-reload';
+    let shouldReloadOnControllerChange = false;
+    let removeUpdateFoundListener: (() => void) | null = null;
+
+    const onControllerChange = () => {
+      if (!shouldReloadOnControllerChange) return;
+
+      if (sessionStorage.getItem(reloadFlag) === '1') {
+        sessionStorage.removeItem(reloadFlag);
+        return;
+      }
+
+      sessionStorage.setItem(reloadFlag, '1');
+      window.location.reload();
+    };
+
     const timer = setTimeout(() => {
+      shouldReloadOnControllerChange = Boolean(navigator.serviceWorker.controller);
+
+      const requestSkipWaiting = (registration: ServiceWorkerRegistration) => {
+        if (!shouldReloadOnControllerChange) return;
+        registration.waiting?.postMessage({ type: 'SKIP_WAITING' });
+      };
+
+      navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+
       navigator.serviceWorker
         .register('/sw.js')
-        .then(() => {
-          // registered successfully
+        .then((registration) => {
+          const onUpdateFound = () => {
+            const installing = registration.installing;
+            if (!installing) return;
+
+            installing.addEventListener('statechange', () => {
+              if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+                requestSkipWaiting(registration);
+              }
+            });
+          };
+
+          registration.addEventListener('updatefound', onUpdateFound);
+          removeUpdateFoundListener = () => {
+            registration.removeEventListener('updatefound', onUpdateFound);
+          };
+
+          if (registration.waiting && navigator.serviceWorker.controller) {
+            requestSkipWaiting(registration);
+          }
+
+          registration.update().catch(() => {
+            // update check failed; keep current worker
+          });
         })
         .catch((err) => {
           console.warn('[SW] registration failed:', err);
         });
     }, 2000);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+      if (removeUpdateFoundListener) removeUpdateFoundListener();
+    };
   }, []);
 
   return null;

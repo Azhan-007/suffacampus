@@ -13,6 +13,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Card from "../../components/Card";
+import { auth } from "../../firebase";
+import { clearSessionAccessToken } from "../../services/api";
 import { getTeacherProfile, TeacherProfile } from "../../services/teacherService";
 
 type Teacher = TeacherProfile;
@@ -51,7 +53,25 @@ export default function TeacherProfileScreen() {
   };
 
   const handleLogout = async () => {
-    await AsyncStorage.clear();
+    try {
+      await auth.signOut();
+    } catch (error) {
+      console.warn("Logout signOut error:", error);
+    }
+
+    await AsyncStorage.multiRemove([
+      "role",
+      "userEmail",
+      "userName",
+      "username",
+      "userId",
+      "studentId",
+      "teacherId",
+      "schoolId",
+      "schoolCode",
+      "schoolName",
+    ]);
+    await clearSessionAccessToken();
     router.replace("/login" as any);
   };
 

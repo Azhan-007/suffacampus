@@ -17,7 +17,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { auth } from "../firebase";
-import { apiFetch, BASE_URL } from "./api";
+import { apiFetch, BASE_URL, getSessionAccessToken } from "./api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -267,7 +267,7 @@ export async function subscribeStudentDashboardActivities(
   let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 
   try {
-    const token = await user.getIdToken();
+    const token = await getSessionAccessToken();
     const wsBase = BASE_URL.replace(/^http/i, "ws");
     const query = `studentId=${encodeURIComponent(studentId)}&token=${encodeURIComponent(token)}`;
     const socketUrl = `${wsBase}/activities/stream?${query}`;

@@ -21,6 +21,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Card from "../components/Card";
 import { SCHOOL_CONFIG, getSchoolConfig } from "../config/school.config";
 import { auth } from "../firebase";
+import { ensureBackendSession } from "../services/api";
 import { getUserByUsername } from "../services/authService";
 
 export default function Login() {
@@ -156,6 +157,9 @@ export default function Login() {
       // Authenticate with Firebase using email
       const userCredential = await signInWithEmailAndPassword(auth, userEmail, password);
       const user = userCredential.user;
+
+      // Bootstrap backend session JWT now so role dashboards don't fail later.
+      await ensureBackendSession(true);
 
       // If email login was used, resolve role from Firebase custom claims or backend
       if (!userRole) {

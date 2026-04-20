@@ -9,7 +9,8 @@ import { Animated, Dimensions, Easing, Image, NativeScrollEvent, NativeSynthetic
 import { SafeAreaView } from "react-native-safe-area-context";
 import Card from "../../components/Card";
 import Section from "../../components/Section";
-import { apiFetch } from "../../services/api";
+import { auth } from "../../firebase";
+import { apiFetch, clearSessionAccessToken } from "../../services/api";
 import {
     getActiveEvents,
     getAppConfig,
@@ -139,7 +140,25 @@ export default function StudentDashboard() {
   };
 
   const handleLogout = async () => {
-    await AsyncStorage.removeItem("role");
+    try {
+      await auth.signOut();
+    } catch (error) {
+      console.warn("Logout signOut error:", error);
+    }
+
+    await AsyncStorage.multiRemove([
+      "role",
+      "userEmail",
+      "userName",
+      "username",
+      "userId",
+      "studentId",
+      "teacherId",
+      "schoolId",
+      "schoolCode",
+      "schoolName",
+    ]);
+    await clearSessionAccessToken();
     router.replace("/login" as any);
   };
 
