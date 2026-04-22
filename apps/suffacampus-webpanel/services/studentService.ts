@@ -1,6 +1,5 @@
-import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, apiFetchPaginated, ApiError, PaginatedResponse } from '@/lib/api';
 import { Student } from '@/types';
-import { useAuthStore } from '@/store/authStore';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,12 +34,67 @@ function deserializeStudent(raw: Record<string, unknown>): Student {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Internal: fetch all students by looping through pages (cursor-based)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch ALL students from the backend by iterating through pages.
+ * Uses cursor-based pagination with a large page size to minimise round-trips.
+ * Server-side filters (classId, sectionId, gender, search) are pushed to the
+ * backend so only matching records are transferred.
+ */
+async function fetchAllStudents(
+  filters?: {
+    classId?: string;
+    sectionId?: string;
+    search?: string;
+    status?: string;
+  }
+): Promise<Student[]> {
+  const PAGE_SIZE = 100; // max allowed by backend
+  const allStudents: Student[] = [];
+  let cursor: string | null = null;
+  let hasMore = true;
+
+  while (hasMore) {
+    const params: Record<string, string | number | boolean | null | undefined> = {
+      limit: PAGE_SIZE,
+      cursor,
+      sortBy: 'createdAt',
+      sortOrder: 'desc' as const,
+    };
+
+    // Push filters to the backend (server-side filtering)
+    if (filters?.classId) params.classId = filters.classId;
+    if (filters?.sectionId) params.sectionId = filters.sectionId;
+    if (filters?.search) params.search = filters.search;
+    if (filters?.status) params.status = filters.status;
+
+    const page: PaginatedResponse<Record<string, unknown>> = await apiFetchPaginated<Record<string, unknown>>(
+      '/students',
+      params
+    );
+
+    allStudents.push(...page.data.map(deserializeStudent));
+    cursor = page.pagination.cursor;
+    hasMore = page.pagination.hasMore;
+  }
+
+  return allStudents;
+}
+
+// ---------------------------------------------------------------------------
+
 export class StudentService {
 
   /**
-   * Get all students — backend: GET /students
-   * schoolId is enforced server-side via the auth token (tenant guard).
-   * Client-side filtering is applied for classId / sectionId / isActive.
+   * Get all students — backend: GET /students (paginated, server-side filtered)
+   *
+   * Pushes classId / sectionId / isActive filters to the backend query params
+   * and loops through all pages so callers receive the complete dataset.
+   *
+   * For UI pagination (load-more / table pages), use `getStudentsPaginated()`.
    */
   static async getStudents(
     schoolId: string,
@@ -50,12 +104,54 @@ export class StudentService {
       isActive?: boolean;
     }
   ): Promise<Student[]> {
-    const raw = await apiFetch<Record<string, unknown>[]>('/students');
-    let students = raw.map(deserializeStudent);
-    if (filters?.classId) students = students.filter((s) => s.classId === filters.classId);
-    if (filters?.sectionId) students = students.filter((s) => s.sectionId === filters.sectionId);
-    if (filters?.isActive !== undefined) students = students.filter((s) => s.isActive === filters.isActive);
+    // Map isActive boolean to the backend's status filter string
+    let status: string | undefined;
+    if (filters?.isActive === false) status = 'inactive';
+
+    const students = await fetchAllStudents({
+      classId: filters?.classId,
+      sectionId: filters?.sectionId,
+      status,
+    });
+
     return students;
+  }
+
+  /**
+   * Get students with cursor-based pagination — for paginated UI tables.
+   * Returns the raw paginated response so callers can use cursor / hasMore.
+   */
+  static async getStudentsPaginated(
+    schoolId: string,
+    params: {
+      limit?: number;
+      cursor?: string | null;
+      sortBy?: string;
+      sortOrder?: 'asc' | 'desc';
+      classId?: string;
+      sectionId?: string;
+      search?: string;
+    } = {}
+  ): Promise<PaginatedResponse<Student>> {
+    const queryParams: Record<string, string | number | boolean | null | undefined> = {
+      limit: params.limit ?? 20,
+      cursor: params.cursor ?? undefined,
+      sortBy: params.sortBy,
+      sortOrder: params.sortOrder,
+      classId: params.classId,
+      sectionId: params.sectionId,
+      search: params.search,
+    };
+
+    const page = await apiFetchPaginated<Record<string, unknown>>(
+      '/students',
+      queryParams
+    );
+
+    return {
+      data: page.data.map(deserializeStudent),
+      pagination: page.pagination,
+    };
   }
 
   /**
@@ -80,10 +176,6 @@ export class StudentService {
     studentData: Omit<Student, 'id' | 'schoolId' | 'classId' | 'createdAt' | 'updatedAt'>,
     classId: string
   ): Promise<{ id: string; credentials: { username: string; email: string; password: string } }> {
-    const schoolId = useAuthStore.getState().getCurrentSchoolId();
-    if (!schoolId) {
-      throw new Error('No active school selected. Cannot create student.');
-    }
     if (!classId) {
       throw new Error('classId is required to create a student.');
     }
@@ -133,27 +225,34 @@ export class StudentService {
   }
 
   /**
-   * Search students by name, studentId, or roll number.
-   * Fetches all students from the backend then filters client-side.
+   * Search students by name — uses backend server-side search.
+   * The backend's GET /students?search= param does case-insensitive
+   * firstName / lastName matching in PostgreSQL.
    */
   static async searchStudents(schoolId: string, searchTerm: string): Promise<Student[]> {
-    const students = await StudentService.getStudents(schoolId);
-    const q = searchTerm.toLowerCase();
-    return students.filter(
-      (s) =>
-        s.firstName.toLowerCase().includes(q) ||
-        s.lastName.toLowerCase().includes(q) ||
-        (s.studentId ?? '').toLowerCase().includes(q) ||
-        (s.rollNumber ?? '').toLowerCase().includes(q)
-    );
+    if (!searchTerm.trim()) return [];
+
+    return fetchAllStudents({ search: searchTerm.trim() });
   }
 
   /**
-   * Get the count of active students for a school (usage tracking).
-   * Fetches all students from the backend and counts active ones client-side.
+   * Get the count of active students for a school.
+   * Uses a small paginated request with count=true to avoid fetching all records.
    */
   static async getStudentCount(schoolId: string): Promise<number> {
-    const students = await StudentService.getStudents(schoolId, { isActive: true });
+    const page = await apiFetchPaginated<Record<string, unknown>>(
+      '/students',
+      { limit: 1, count: true }
+    );
+
+    // If the backend returns total in pagination, use it.
+    // Otherwise fall back to fetching all active students.
+    if (typeof page.pagination.total === 'number') {
+      return page.pagination.total;
+    }
+
+    // Fallback: fetch all and count
+    const students = await fetchAllStudents();
     return students.length;
   }
 }

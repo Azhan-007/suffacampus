@@ -173,9 +173,7 @@ export async function apiFetch<T = unknown>(
 
       const json = await res.json();
 
-      // DEBUG: Log response
-      const dataLen = json?.data ? (Array.isArray(json.data) ? json.data.length : 'object') : 'no-data';
-      console.log(`[apiFetch] ${path} => status: ${res.status}, dataLen: ${dataLen}`);
+
 
       // Auto-unwrap the standard backend envelope { success, data }
       if (
@@ -262,11 +260,17 @@ export async function apiFetchPaginated<T>(
 ): Promise<PaginatedResponse<T>> {
   const { authMode = 'auto', ...fetchOptions } = options;
   const token = await resolveAuthToken(authMode);
+  const { user, currentSchool } = useAuthStore.getState();
+  const schoolHeader: Record<string, string> = {};
+  if (user?.role === 'SuperAdmin' && currentSchool?.id) {
+    schoolHeader['X-School-Id'] = currentSchool.id;
+  }
 
   const headers: Record<string, string> = {
     // Only set Content-Type for requests with a body
     ...(fetchOptions.body ? { 'Content-Type': 'application/json' } : {}),
     ...(fetchOptions.headers as Record<string, string> | undefined),
+    ...schoolHeader,
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 

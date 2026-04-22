@@ -1,13 +1,3 @@
-/**
- * API Helper — wraps all HTTP requests to the Fastify backend.
- *
- * Architecture rules:
- *  - Firebase Auth stays client-side.
- *  - Protected API calls use backend session JWTs from /auth/login.
- *  - Firestore client SDK is NOT used here or anywhere in the services layer.
- *  - All data reads/writes go through the backend URL below.
- */
-
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { auth } from "../firebase";
 import Constants from "expo-constants";
@@ -118,6 +108,31 @@ type SessionTokenCache = {
 let sessionTokenCache: SessionTokenCache | null = null;
 let inflightSessionPromise: Promise<string> | null = null;
 
+// ---------------------------------------------------------------------------
+// JWT expiry helper — avoids wasting a round-trip with an expired token
+// ---------------------------------------------------------------------------
+
+function isJwtExpired(token: string): boolean {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return true;
+
+    const payloadSegment = parts[1];
+    // Base64url → Base64
+    const base64 = payloadSegment.replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(base64);
+    const payload = JSON.parse(json) as { exp?: number };
+
+    if (typeof payload.exp !== "number") return false; // no exp claim → don't reject
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    return payload.exp <= nowSeconds;
+  } catch {
+    return true; // malformed → treat as expired
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 async function persistSessionAccessToken(uid: string, token: string): Promise<void> {
   sessionTokenCache = { uid, token };
   await AsyncStorage.multiSet([
@@ -158,6 +173,12 @@ async function getCachedSessionAccessToken(): Promise<string | null> {
   }
 
   if (sessionTokenCache && sessionTokenCache.uid === user.uid) {
+    // Check expiry before returning cached token
+    if (isJwtExpired(sessionTokenCache.token)) {
+      sessionTokenCache = null;
+      await AsyncStorage.multiRemove([SESSION_TOKEN_STORAGE_KEY, SESSION_TOKEN_UID_STORAGE_KEY]);
+      return null;
+    }
     return sessionTokenCache.token;
   }
 
@@ -167,6 +188,11 @@ async function getCachedSessionAccessToken(): Promise<string | null> {
 
   const stored = await readStoredSessionAccessToken(user.uid);
   if (stored) {
+    // Check expiry before using stored token
+    if (isJwtExpired(stored)) {
+      await AsyncStorage.multiRemove([SESSION_TOKEN_STORAGE_KEY, SESSION_TOKEN_UID_STORAGE_KEY]);
+      return null;
+    }
     sessionTokenCache = { uid: user.uid, token: stored };
     return stored;
   }
@@ -255,12 +281,29 @@ export async function getSessionAccessToken(): Promise<string> {
   return ensureBackendSession();
 }
 
+// ---------------------------------------------------------------------------
+// School context header — reads the schoolId persisted during school-select
+// ---------------------------------------------------------------------------
+
+async function getSchoolIdHeader(): Promise<Record<string, string>> {
+  try {
+    const schoolId = await AsyncStorage.getItem("schoolId");
+    if (schoolId && schoolId.trim().length > 0) {
+      return { "X-School-Id": schoolId.trim() };
+    }
+  } catch {
+    // AsyncStorage read failure is non-fatal — proceed without header
+  }
+  return {};
+}
+
 /**
  * apiFetch — authenticated fetch wrapper.
  *
  * Automatically:
  *  1. Ensures backend session JWT is available (bootstraps via /auth/login if needed).
  *  2. Attaches `Authorization: Bearer <sessionToken>` and `Content-Type: application/json`.
+ *  3. Attaches `X-School-Id` header from the stored school context (for tenant isolation).
  *  4. Throws a descriptive Error if the response is not 2xx.
  *  5. Returns the parsed JSON body.
  */
@@ -280,6 +323,9 @@ export async function apiFetch<T = unknown>(
 
   const method: HttpMethod = options.method ?? "GET";
 
+  // Resolve school context header (tenant isolation for SuperAdmin)
+  const schoolHeader = await getSchoolIdHeader();
+
   let hasRetriedAfterSessionRefresh = false;
 
   while (true) {
@@ -288,6 +334,7 @@ export async function apiFetch<T = unknown>(
     const headers: HeadersInit = {
       "Authorization": `Bearer ${sessionToken}`,
       "Content-Type": "application/json",
+      ...schoolHeader,
     };
 
     const fetchInit: RequestInit = { method, headers };
@@ -342,3 +389,4 @@ export async function apiFetch<T = unknown>(
     throw new Error(errorMessage);
   }
 }
+
