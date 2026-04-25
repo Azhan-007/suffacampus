@@ -1,4 +1,4 @@
-﻿import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { Fee } from '@/types';
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-﻿import type { TranslationKeys } from "../index";
+import type { TranslationKeys } from "../index";
 
 const te: TranslationKeys = {
   nav: {

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -33,7 +33,7 @@ export default function LibraryPage() {
   const { currentSchool } = useAuthStore();
   const queryClient = useQueryClient();
 
-  // "€"€ Data fetching via React Query "€"€
+  // "" Data fetching via React Query ""
   const { data: books = [], isLoading: loading, dataUpdatedAt } = useApiQuery<Library[]>({
     queryKey: ['library'],
     path: '/library/books?limit=1000',
@@ -210,7 +210,7 @@ export default function LibraryPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
             <div className="flex items-center gap-2"><h3 className="text-[14px] font-semibold text-slate-700">Book Catalog</h3><span className="text-xs font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded tabular-nums border border-slate-100">{sortedBooks.length}</span></div>
-            <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Showing {sortedBooks.length > 0 ? (page - 1) * pageSize + 1 : 0}€"{Math.min(page * pageSize, sortedBooks.length)}</span><div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div></div>
+            <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Showing {sortedBooks.length > 0 ? (page - 1) * pageSize + 1 : 0}"{Math.min(page * pageSize, sortedBooks.length)}</span><div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div></div>
           </div>
           {paginatedBooks.length > 0 ? (
             <>

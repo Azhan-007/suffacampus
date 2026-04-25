@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -60,7 +60,7 @@ export default function AttendancePage() {
   const schoolId = currentSchool?.id || user?.schoolId || '';
   const queryClient = useQueryClient();
 
-  // "€"€ Data fetching via React Query "€"€
+  // "" Data fetching via React Query ""
   const { data: attendance = [], isLoading: attendanceLoading, dataUpdatedAt } = useApiQuery<Attendance[]>({
     queryKey: ['attendance', schoolId],
     path: '/attendance',
@@ -98,7 +98,7 @@ export default function AttendancePage() {
   const loading = attendanceLoading || studentsLoading;
   const lastSynced = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
 
-  // "€"€ UI state "€"€
+  // "" UI state ""
   const [isMarkModalOpen, setIsMarkModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [viewingRecord, setViewingRecord] = useState<Attendance | null>(null);
@@ -106,20 +106,20 @@ export default function AttendancePage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // "€"€ Filter state "€"€
+  // "" Filter state ""
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterDate, setFilterDate] = useState(format(new Date(), 'yyyy-MM-dd'));
 
-  // "€"€ Sort & pagination "€"€
+  // "" Sort & pagination ""
   const [sortField, setSortField] = useState<SortField>('studentName');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
-  // "€"€ Mark attendance form "€"€
+  // "" Mark attendance form ""
   const [markClass, setMarkClass] = useState('');
   const [markSection, setMarkSection] = useState('');
   const [markDate, setMarkDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -128,7 +128,7 @@ export default function AttendancePage() {
 
 
 
-  // "€"€ Derived stats "€"€
+  // "" Derived stats ""
   const todayRecords = useMemo(() => {
     const todayStr = format(new Date(), 'yyyy-MM-dd');
     return attendance.filter((a) => {
@@ -142,7 +142,7 @@ export default function AttendancePage() {
   const lateToday = todayRecords.filter((a) => a.status === 'Late').length;
   const attendanceRate = totalToday > 0 ? Math.round((presentToday / totalToday) * 100) : 0;
 
-  // "€"€ Filtered & sorted list "€"€
+  // "" Filtered & sorted list ""
   const filteredRecords = useMemo(() => {
     let list = attendance;
 
@@ -187,7 +187,7 @@ export default function AttendancePage() {
 
   useEffect(() => { setPage(1); }, [searchTerm, filterClass, filterSection, filterStatus, filterDate, sortField, sortDir]);
 
-  // "€"€ Sort helpers "€"€
+  // "" Sort helpers ""
   const toggleSort = (f: SortField) => {
     if (sortField === f) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setSortField(f); setSortDir('asc'); }
@@ -198,7 +198,7 @@ export default function AttendancePage() {
     return sortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-500" /> : <ArrowDown className="w-3 h-3 text-blue-500" />;
   };
 
-  // "€"€ Active filters "€"€
+  // "" Active filters ""
   const activeFilters = useMemo(() => {
     const chips: { key: string; label: string; clear: () => void }[] = [];
     if (filterClass) {
@@ -213,7 +213,7 @@ export default function AttendancePage() {
 
   const clearAllFilters = () => { setSearchTerm(''); setFilterClass(''); setFilterSection(''); setFilterStatus(''); };
 
-  // "€"€ Mark attendance modal handlers "€"€
+  // "" Mark attendance modal handlers ""
   const studentsForMark = useMemo(() => {
     if (!markClass) return [];
     let filtered = students.filter((s) => s.isActive && s.classId === markClass);
@@ -266,7 +266,7 @@ export default function AttendancePage() {
     }
   };
 
-  // "€"€ Delete "€"€
+  // "" Delete ""
   const handleDelete = async () => {
     if (!deleteDialog.id) return;
     setIsDeleting(true);
@@ -282,7 +282,7 @@ export default function AttendancePage() {
     }
   };
 
-  // "€"€ Export "€"€
+  // "" Export ""
   const handleExport = (type: 'csv' | 'print') => {
     const headers = ['Student', 'Class', 'Section', 'Date', 'Status', 'Remarks', 'Marked By'];
     const rows = sortedRecords.map((a) => [
@@ -299,7 +299,7 @@ export default function AttendancePage() {
     else exportToPrint(config);
   };
 
-  // "€"€ Quick date navigation "€"€
+  // "" Quick date navigation ""
   const goToPrevDay = () => {
     const d = new Date(filterDate);
     d.setDate(d.getDate() - 1);
@@ -314,12 +314,12 @@ export default function AttendancePage() {
 
   const isFilterDateToday = filterDate === format(new Date(), 'yyyy-MM-dd');
 
-  // "€"€"€ Render "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€
+  // """ Render """""""""""""""""""""""""""""""""""""""""""""
   return (
     <DashboardLayout>
       <div className="space-y-8">
 
-        {/* "€"€ Page Header "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+        {/* "" Page Header """""""""""""""""""""""""""""""" */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">Attendance</h1>
@@ -344,7 +344,7 @@ export default function AttendancePage() {
           </div>
         </div>
 
-        {/* "€"€ Stat Cards "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+        {/* "" Stat Cards """"""""""""""""""""""""""""""""" */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
           <StatCard title="Total Marked" value={totalToday} icon={Users} color="blue" subtitle="Today" loading={loading} />
           <StatCard title="Present" value={presentToday} icon={UserCheck} color="emerald" subtitle={`${attendanceRate}% rate`} loading={loading} />
@@ -352,7 +352,7 @@ export default function AttendancePage() {
           <StatCard title="Late" value={lateToday} icon={Clock} color="amber" loading={loading} />
         </div>
 
-        {/* "€"€ Date Navigation + Filters "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+        {/* "" Date Navigation + Filters """""""""""""""""" */}
         <div className="bg-slate-50 rounded-xl border border-slate-200 p-5" style={{ boxShadow: 'var(--shadow-card)' }}>
           <div className="flex flex-col lg:flex-row lg:items-center gap-4">
             {/* Date navigator */}
@@ -433,7 +433,7 @@ export default function AttendancePage() {
           )}
         </div>
 
-        {/* "€"€ Attendance Table "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+        {/* "" Attendance Table """"""""""""""""""""""""""" */}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" style={{ boxShadow: 'var(--shadow-card)' }}>
           {filteredRecords.length === 0 && !loading ? (
             <EmptyState
@@ -511,7 +511,7 @@ export default function AttendancePage() {
                               <Badge variant={statusCfg.badge} size="sm">{record.status}</Badge>
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-400 max-w-[200px] truncate">
-                              {record.remarks || '€"'}
+                              {record.remarks || '"'}
                             </td>
                             <td className="px-6 py-4 text-right">
                               <div className="flex items-center justify-end gap-1">
@@ -579,7 +579,7 @@ export default function AttendancePage() {
         </div>
       </div>
 
-      {/* "€"€ Mark Attendance Modal "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Mark Attendance Modal """"""""""""""""""""""" */}
       <Modal
         isOpen={isMarkModalOpen}
         onClose={() => setIsMarkModalOpen(false)}
@@ -726,7 +726,7 @@ export default function AttendancePage() {
         </div>
       </Modal>
 
-      {/* "€"€ View Record Modal "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" View Record Modal """""""""""""""""""""""""" */}
       <Modal
         isOpen={isViewModalOpen}
         onClose={() => { setIsViewModalOpen(false); setViewingRecord(null); }}
@@ -774,7 +774,7 @@ export default function AttendancePage() {
         )}
       </Modal>
 
-      {/* "€"€ Delete Confirmation "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Delete Confirmation """""""""""""""""""""""" */}
       <ConfirmDialog
         isOpen={deleteDialog.isOpen}
         onClose={() => setDeleteDialog({ isOpen: false, id: null, name: '' })}

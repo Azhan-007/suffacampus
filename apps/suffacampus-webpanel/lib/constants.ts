@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Shared constants used across multiple pages.
  *
  * Subjects & departments have no dedicated backend endpoint so we maintain

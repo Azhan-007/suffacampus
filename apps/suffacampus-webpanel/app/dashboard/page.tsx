@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useMemo } from 'react';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
@@ -63,7 +63,7 @@ const ChartTooltip = ({ active, payload, label }: ChartTooltipProps) => {
         <p key={i} className="text-slate-500">
           <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ backgroundColor: p.color }} />
           {p.name}: <span className="font-semibold text-slate-700">
-            {p.dataKey === 'rate' ? `${p.value}%` : p.dataKey === 'collected' || p.dataKey === 'pending' ? `₹${p.value}K` : p.value}
+            {p.dataKey === 'rate' ? `${p.value}%` : p.dataKey === 'collected' || p.dataKey === 'pending' ? `${p.value}K` : p.value}
           </span>
         </p>
       ))}

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { School } from '@/types';
 import { useAuthStore } from '@/store/authStore';

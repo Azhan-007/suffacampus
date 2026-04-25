@@ -1,4 +1,4 @@
-﻿import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { Library } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ export class LibraryService {
   }
 
   /**
-   * Get books by category  -  backend: GET /library/books?category=…
+   * Get books by category  -  backend: GET /library/books?category=
    */
   static async getBooksByCategory(category: string): Promise<Library[]> {
     const raw = await apiFetch<Record<string, unknown>[]>(

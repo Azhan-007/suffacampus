@@ -1,4 +1,4 @@
-﻿import {
+import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,

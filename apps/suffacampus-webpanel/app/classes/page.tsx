@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -27,7 +27,7 @@ export default function ClassesPage() {
   const { currentSchool } = useAuthStore();
   const queryClient = useQueryClient();
 
-  // "€"€ Data fetching via React Query "€"€
+  // "" Data fetching via React Query ""
   const { data: classes = [], isLoading: loading, dataUpdatedAt } = useApiQuery<Class[]>({
     queryKey: ['classes'],
     path: '/classes/all',
@@ -78,7 +78,7 @@ export default function ClassesPage() {
     loadStats();
   }, [classes]);
 
-  // Filter †' Sort †' Paginate
+  // Filter ' Sort ' Paginate
   const filteredClasses = useMemo(() => {
     let list = classes;
     if (filterStatus === 'active') list = list.filter(c => c.isActive !== false);
@@ -153,7 +153,7 @@ export default function ClassesPage() {
     return chips;
   }, [searchTerm]);
 
-  // "€"€ Form Helpers "€"€
+  // "" Form Helpers ""
   const resetClassForm = () => { setClassFormData({ className: '', grade: 1, capacity: 60, isActive: true }); setFormErrors({}); setEditingClass(null); };
   const resetSectionForm = () => { setSectionFormData({ id: '', sectionName: '', capacity: 60, teacherId: '', teacherName: '' }); setFormErrors({}); setEditingSection(null); };
 
@@ -382,7 +382,7 @@ export default function ClassesPage() {
               <span className="text-xs font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded tabular-nums border border-slate-100">{sortedClasses.length}</span>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-xs text-slate-400">Showing {sortedClasses.length > 0 ? (page - 1) * pageSize + 1 : 0}€"{Math.min(page * pageSize, sortedClasses.length)}</span>
+              <span className="text-xs text-slate-400">Showing {sortedClasses.length > 0 ? (page - 1) * pageSize + 1 : 0}"{Math.min(page * pageSize, sortedClasses.length)}</span>
               <div className="w-[100px]">
                 <Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} />
               </div>
@@ -589,7 +589,7 @@ export default function ClassesPage() {
                     <span className="text-xs font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">Grade {viewingClass.grade}</span>
                     <Badge variant={viewingClass.isActive ? 'success' : 'danger'} size="sm" dot>{viewingClass.isActive ? 'Active' : 'Inactive'}</Badge>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">{viewingClass.sections.length} sections €¢ Capacity: {viewingClass.capacity}</p>
+                  <p className="text-xs text-slate-400 mt-1">{viewingClass.sections.length} sections  Capacity: {viewingClass.capacity}</p>
                 </div>
               </div>
               <div>

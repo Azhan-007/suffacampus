@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useMemo, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -96,7 +96,7 @@ export default function ApiPage() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('docs');
 
-  // "€"€ Data fetching via React Query "€"€
+  // "" Data fetching via React Query ""
   const { data: apiKeys = [], isLoading: keysLoading } = useQuery<ApiKey[]>({
     queryKey: ['api-keys', schoolId],
     queryFn: () => ApiKeyService.getApiKeys(schoolId),
@@ -226,7 +226,7 @@ export default function ApiPage() {
             <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-blue-600" />
               <h3 className="text-[14px] font-semibold text-slate-700">
-                API Usage €" Last 30 Days
+                API Usage " Last 30 Days
               </h3>
             </div>
             <div className="p-5">
@@ -765,7 +765,7 @@ function KeysTab({
         title={createdRawKey ? 'API Key Created' : 'Create API Key'}
         subtitle={
           createdRawKey
-            ? 'Save this key €" it won\'t be shown again'
+            ? 'Save this key " it won\'t be shown again'
             : 'Configure permissions and rate limits'
         }
         size="lg"

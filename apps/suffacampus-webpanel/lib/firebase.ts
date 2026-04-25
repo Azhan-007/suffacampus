@@ -1,4 +1,4 @@
-﻿// Firebase Configuration and Initialization
+// Firebase Configuration and Initialization
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import {

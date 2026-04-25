@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -334,7 +334,7 @@ export default function SuperAdminSchoolsPage() {
       <div className="space-y-1">
         <div className="flex items-center space-x-2 text-sm text-slate-600">
           <Users className="w-3.5 h-3.5 text-slate-300" />
-          <span>{studentUsage} / {studentLimit <= 0 ? '∞' : studentLimit}</span>
+          <span>{studentUsage} / {studentLimit <= 0 ? '' : studentLimit}</span>
         </div>
         {studentLimit > 0 && (
           <div className="w-24 h-1.5 bg-slate-200 rounded-full overflow-hidden">

@@ -1,4 +1,4 @@
-﻿import { useEffect } from 'react';
+import { useEffect } from 'react';
 
 /**
  * Sets `document.title` for the current page.
@@ -7,7 +7,7 @@
 export function useDocumentTitle(title: string) {
   useEffect(() => {
     const prev = document.title;
-    document.title = `${title} Â- SuffaCampus`;
+    document.title = `${title} - SuffaCampus`;
     return () => { document.title = prev; };
   }, [title]);
 }

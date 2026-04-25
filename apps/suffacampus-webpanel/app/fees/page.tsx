@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -261,7 +261,7 @@ export default function FeesPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
             <div className="flex items-center gap-2"><h3 className="text-[14px] font-semibold text-slate-700">Fee Records</h3><span className="text-xs font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded tabular-nums border border-slate-100">{sortedFees.length}</span></div>
-            <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Showing {sortedFees.length > 0 ? (page - 1) * pageSize + 1 : 0}€"{Math.min(page * pageSize, sortedFees.length)}</span><div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div></div>
+            <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Showing {sortedFees.length > 0 ? (page - 1) * pageSize + 1 : 0}"{Math.min(page * pageSize, sortedFees.length)}</span><div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div></div>
           </div>
           {paginatedFees.length > 0 ? (
             <>
@@ -286,7 +286,7 @@ export default function FeesPage() {
                       <td className="px-4 py-3"><span className="text-xs font-medium text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">{f.feeType}</span></td>
                       <td className="px-4 py-3"><span className="text-sm font-medium text-slate-700 tabular-nums">{formatCurrency(f.amount)}</span></td>
                       <td className="px-4 py-3"><span className={`text-sm whitespace-nowrap ${f.status === 'Overdue' ? 'text-red-500 font-medium' : 'text-slate-500'}`}>{format(new Date(f.dueDate), 'dd MMM yyyy')}</span></td>
-                      <td className="px-4 py-3"><span className="text-sm text-slate-600 tabular-nums">{f.amountPaid ? formatCurrency(f.amountPaid) : '€"'}</span></td>
+                      <td className="px-4 py-3"><span className="text-sm text-slate-600 tabular-nums">{f.amountPaid ? formatCurrency(f.amountPaid) : '"'}</span></td>
                       <td className="px-4 py-3"><span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded ${statusStyle[f.status]}`}><span className={`w-1.5 h-1.5 rounded-full ${statusDot[f.status]}`} />{f.status}</span></td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
@@ -365,7 +365,7 @@ export default function FeesPage() {
                     <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded ${statusStyle[viewingFee.status]}`}><span className={`w-1.5 h-1.5 rounded-full ${statusDot[viewingFee.status]}`} />{viewingFee.status}</span>
                     <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">{viewingFee.feeType}</span>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">{formatCurrency(viewingFee.amount)} €" due {format(new Date(viewingFee.dueDate), 'MMMM dd, yyyy')}</p>
+                  <p className="text-xs text-slate-400 mt-1">{formatCurrency(viewingFee.amount)} " due {format(new Date(viewingFee.dueDate), 'MMMM dd, yyyy')}</p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

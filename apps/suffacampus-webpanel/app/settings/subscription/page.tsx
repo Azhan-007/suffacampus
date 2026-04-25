@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -208,11 +208,11 @@ export default function SubscriptionPage() {
                 <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Plan Limits</h4>
                 <div className="space-y-2.5">
                   {[
-                    { label: 'Students', value: currentPlan.limits.maxStudents, icon: '👨‍🎓' },
-                    { label: 'Teachers', value: currentPlan.limits.maxTeachers, icon: '👩‍🏫' },
-                    { label: 'Classes', value: currentPlan.limits.maxClasses, icon: '📚' },
-                    { label: 'Admins', value: currentPlan.limits.maxAdmins, icon: '🔑' },
-                    { label: 'Storage', value: currentPlan.limits.maxStorage, icon: '💾', suffix: currentPlan.limits.maxStorage >= 1000 ? ' GB' : ' MB' },
+                    { label: 'Students', value: currentPlan.limits.maxStudents, icon: '' },
+                    { label: 'Teachers', value: currentPlan.limits.maxTeachers, icon: '' },
+                    { label: 'Classes', value: currentPlan.limits.maxClasses, icon: '' },
+                    { label: 'Admins', value: currentPlan.limits.maxAdmins, icon: '' },
+                    { label: 'Storage', value: currentPlan.limits.maxStorage, icon: '', suffix: currentPlan.limits.maxStorage >= 1000 ? ' GB' : ' MB' },
                   ].map((item) => (
                     <div key={item.label} className="flex items-center justify-between">
                       <span className="text-xs text-slate-600 flex items-center gap-1.5"><span className="text-[14px]">{item.icon}</span>{item.label}</span>
@@ -353,7 +353,7 @@ export default function SubscriptionPage() {
                       {Object.entries(plan.limits).map(([key, val]) => (
                         <div key={key} className="flex items-center justify-between text-xs">
                           <span className="text-slate-500 capitalize">{key.replace('max', '')}</span>
-                          <span className="font-medium text-slate-700">{val === -1 ? '∞' : key === 'maxStorage' ? (val >= 1000 ? `${val / 1000} GB` : `${val} MB`) : val}</span>
+                          <span className="font-medium text-slate-700">{val === -1 ? '' : key === 'maxStorage' ? (val >= 1000 ? `${val / 1000} GB` : `${val} MB`) : val}</span>
                         </div>
                       ))}
                     </div>

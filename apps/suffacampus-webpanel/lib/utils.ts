@@ -1,4 +1,4 @@
-﻿// --- Shared Utilities --------------------------------------------------------
+// --- Shared Utilities --------------------------------------------------------
 // Extracted from page-level duplicates to a single source of truth.
 
 /** Pagination page-size options used across all CRUD tables. */

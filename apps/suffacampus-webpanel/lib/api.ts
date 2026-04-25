@@ -1,4 +1,4 @@
-﻿import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useAuthStore } from '@/store/authStore';
 import toast from 'react-hot-toast';

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { ReactNode, useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
@@ -70,7 +70,7 @@ function SuperAdminSidebar({
         collapsed ? 'w-[68px]' : 'w-[260px]'
       }`}
     >
-      {/* "€"€ Header "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Header """""""""""""""""""""""""""""""""" */}
       <div className={`flex items-center shrink-0 ${collapsed ? 'flex-col gap-1.5 pt-4 pb-2 px-2' : 'gap-3 px-5 py-5'}`}>
         <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
           <Shield className={`text-white ${collapsed ? 'w-4 h-4' : 'w-5 h-5'}`} />
@@ -100,10 +100,10 @@ function SuperAdminSidebar({
         )}
       </div>
 
-      {/* "€"€ Divider "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Divider """"""""""""""""""""""""""""""""" */}
       <div className={`shrink-0 mx-auto ${collapsed ? 'w-8' : 'w-[calc(100%-32px)]'} h-px bg-slate-700/60`} />
 
-      {/* "€"€ Nav "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Nav """"""""""""""""""""""""""""""""""""" */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3" aria-label="SuperAdmin Navigation">
         <ul className={`flex flex-col gap-0.5 ${collapsed ? 'items-center px-2' : 'px-3'}`}>
           {NAV_ITEMS.map((item, index) => {
@@ -145,7 +145,7 @@ function SuperAdminSidebar({
           })}
         </ul>
 
-        {/* "€"€ Switch to School View "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+        {/* "" Switch to School View """""""""""""""""" */}
         {!collapsed && (
           <div className="px-3 mt-6">
             <div className="px-3 pt-3 pb-2">
@@ -162,7 +162,7 @@ function SuperAdminSidebar({
         )}
       </nav>
 
-      {/* "€"€ Footer / User "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Footer / User """"""""""""""""""""""""""" */}
       {!collapsed && (
         <div className="shrink-0 px-3 py-4 border-t border-slate-700/60">
           <div className="flex items-center gap-3 px-2">

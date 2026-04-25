@@ -1,8 +1,8 @@
-﻿'use client';
+'use client';
 
 import { useState, useCallback } from 'react';
 
-// ── Types ────────────────────────────────────────────────────────────
+//  Types 
 
 export interface DeleteDialogState {
   isOpen: boolean;
@@ -18,34 +18,34 @@ export interface UseCrudModalOptions<TEntity, TForm> {
 }
 
 export interface UseCrudModalReturn<TEntity, TForm> {
-  // ── Add/Edit modal ──
+  //  Add/Edit modal 
   isModalOpen: boolean;
   setIsModalOpen: (open: boolean) => void;
   editingEntity: TEntity | null;
 
-  // ── View modal ──
+  //  View modal 
   isViewModalOpen: boolean;
   setIsViewModalOpen: (open: boolean) => void;
   viewingEntity: TEntity | null;
   setViewingEntity: (entity: TEntity | null) => void;
 
-  // ── Form state ──
+  //  Form state 
   formData: TForm;
   setFormData: React.Dispatch<React.SetStateAction<TForm>>;
   formErrors: Record<string, string>;
   setFormErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 
-  // ── Delete dialog ──
+  //  Delete dialog 
   deleteDialog: DeleteDialogState;
   setDeleteDialog: React.Dispatch<React.SetStateAction<DeleteDialogState>>;
 
-  // ── Loading states ──
+  //  Loading states 
   isSaving: boolean;
   setIsSaving: (saving: boolean) => void;
   isDeleting: boolean;
   setIsDeleting: (deleting: boolean) => void;
 
-  // ── Actions ──
+  //  Actions 
   /** Open the modal for creating (empty form) or editing (pre-filled) */
   openModal: (entity?: TEntity) => void;
   /** Close the modal and reset form */
@@ -58,7 +58,7 @@ export interface UseCrudModalReturn<TEntity, TForm> {
   closeDelete: () => void;
 }
 
-// ── Hook ─────────────────────────────────────────────────────────────
+//  Hook 
 
 /**
  * Encapsulates modal open/close, form state, delete dialog, and loading
@@ -73,30 +73,30 @@ export function useCrudModal<TEntity, TForm>(
 ): UseCrudModalReturn<TEntity, TForm> {
   const { defaultFormData, entityToForm } = options;
 
-  // ── Add/Edit modal ──
+  //  Add/Edit modal 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingEntity, setEditingEntity] = useState<TEntity | null>(null);
 
-  // ── View modal ──
+  //  View modal 
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [viewingEntity, setViewingEntity] = useState<TEntity | null>(null);
 
-  // ── Form state ──
+  //  Form state 
   const [formData, setFormData] = useState<TForm>(defaultFormData);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // ── Delete dialog ──
+  //  Delete dialog 
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>({
     isOpen: false,
     id: null,
     name: '',
   });
 
-  // ── Loading states ──
+  //  Loading states 
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // ── Actions ──
+  //  Actions 
 
   const resetForm = useCallback(() => {
     setFormData(defaultFormData);

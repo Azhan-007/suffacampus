@@ -1,4 +1,4 @@
-﻿import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { Event } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ export class EventService {
   }
 
   /**
-   * Get events by type  -  backend: GET /events?eventType=…
+   * Get events by type  -  backend: GET /events?eventType=
    */
   static async getEventsByType(
     _schoolId: string,

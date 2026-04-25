@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -33,7 +33,7 @@ export default function TimetablePage() {
   const { currentSchool } = useAuthStore();
   const queryClient = useQueryClient();
 
-  // "€"€ Data fetching via React Query "€"€
+  // "" Data fetching via React Query ""
   const { data: timetables = [], isLoading: loading, dataUpdatedAt } = useApiQuery<Timetable[]>({
     queryKey: ['timetable'],
     path: '/timetable?limit=1000',
@@ -221,7 +221,7 @@ export default function TimetablePage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
             <div className="flex items-center gap-2"><h3 className="text-[14px] font-semibold text-slate-700">Timetable Records</h3><span className="text-xs font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded tabular-nums border border-slate-100">{sortedTimetables.length}</span></div>
-            <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Showing {sortedTimetables.length > 0 ? (page - 1) * pageSize + 1 : 0}€"{Math.min(page * pageSize, sortedTimetables.length)}</span><div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div></div>
+            <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Showing {sortedTimetables.length > 0 ? (page - 1) * pageSize + 1 : 0}"{Math.min(page * pageSize, sortedTimetables.length)}</span><div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div></div>
           </div>
           {paginatedTimetables.length > 0 ? (
             <>
@@ -255,7 +255,7 @@ export default function TimetablePage() {
                       {isExpanded && (t.periods || []).length > 0 && (
                         <tr><td colSpan={9} className="bg-slate-25 px-8 py-3 border-b border-slate-100">
                           <div className="grid gap-2">{(t.periods || []).map((p, i) => (
-                            <div key={i} className="flex items-center gap-4 px-4 py-2.5 bg-white rounded-lg border border-slate-100"><span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded w-5 h-5 flex items-center justify-center">{p.periodNumber}</span><span className="text-sm font-medium text-slate-700 w-32">{p.subject}</span><span className="text-xs text-slate-500 w-20 flex items-center gap-1"><Clock className="w-3 h-3" />{p.startTime}€"{p.endTime}</span>{p.teacherName && <span className="text-xs text-slate-500 flex items-center gap-1"><User2 className="w-3 h-3" />{p.teacherName}</span>}{p.roomNumber && <span className="text-xs text-slate-400 flex items-center gap-1"><MapPin className="w-3 h-3" />{p.roomNumber}</span>}</div>
+                            <div key={i} className="flex items-center gap-4 px-4 py-2.5 bg-white rounded-lg border border-slate-100"><span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded w-5 h-5 flex items-center justify-center">{p.periodNumber}</span><span className="text-sm font-medium text-slate-700 w-32">{p.subject}</span><span className="text-xs text-slate-500 w-20 flex items-center gap-1"><Clock className="w-3 h-3" />{p.startTime}"{p.endTime}</span>{p.teacherName && <span className="text-xs text-slate-500 flex items-center gap-1"><User2 className="w-3 h-3" />{p.teacherName}</span>}{p.roomNumber && <span className="text-xs text-slate-400 flex items-center gap-1"><MapPin className="w-3 h-3" />{p.roomNumber}</span>}</div>
                           ))}</div>
                         </td></tr>
                       )}
@@ -319,14 +319,14 @@ export default function TimetablePage() {
                 <div className={`w-14 h-14 rounded-xl ${DAY_COLORS[viewingTimetable.day] || 'bg-slate-500'} flex items-center justify-center text-white text-lg font-bold shrink-0`}>{viewingTimetable.day[0]}</div>
                 <div className="flex-1 min-w-0">
                   <h3 className="text-lg font-semibold text-slate-800">{viewingTimetable.className || viewingTimetable.classId}</h3>
-                  <p className="text-sm text-slate-500">{viewingTimetable.day} €" {viewingTimetable.periods?.length || 0} periods</p>
+                  <p className="text-sm text-slate-500">{viewingTimetable.day} " {viewingTimetable.periods?.length || 0} periods</p>
                 </div>
               </div>
               <div className="space-y-2">{(viewingTimetable.periods || []).map((p, i) => (
                 <div key={i} className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg border border-slate-100">
                   <span className="text-xs font-bold text-blue-600 bg-blue-50 w-7 h-7 flex items-center justify-center rounded-lg">{p.periodNumber}</span>
-                  <div className="flex-1"><span className="text-sm font-medium text-slate-700">{p.subject}</span>{p.teacherName && <span className="text-xs text-slate-400 ml-2">€" {p.teacherName}</span>}</div>
-                  <div className="flex items-center gap-3 text-xs text-slate-500"><span className="flex items-center gap-1"><Clock className="w-3 h-3" />{p.startTime}€"{p.endTime}</span>{p.roomNumber && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{p.roomNumber}</span>}</div>
+                  <div className="flex-1"><span className="text-sm font-medium text-slate-700">{p.subject}</span>{p.teacherName && <span className="text-xs text-slate-400 ml-2">" {p.teacherName}</span>}</div>
+                  <div className="flex items-center gap-3 text-xs text-slate-500"><span className="flex items-center gap-1"><Clock className="w-3 h-3" />{p.startTime}"{p.endTime}</span>{p.roomNumber && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{p.roomNumber}</span>}</div>
                 </div>
               ))}</div>
               <div className="flex justify-end gap-2 pt-4 border-t border-slate-100"><Button variant="secondary" onClick={() => setIsViewModalOpen(false)}>Close</Button><Button onClick={() => { setIsViewModalOpen(false); handleOpenModal(viewingTimetable); }}><Pencil className="w-3.5 h-3.5" /> Edit Schedule</Button></div>

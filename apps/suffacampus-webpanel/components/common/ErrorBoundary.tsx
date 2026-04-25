@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { Component, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home, Bug } from 'lucide-react';

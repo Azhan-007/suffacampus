@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -295,7 +295,7 @@ export default function SuperAdminDashboard() {
 
   return (
     <div className="space-y-8">
-      {/* "€"€ Header "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Header """""""""""""""""""""""""""""""""""""" */}
       <div>
         <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">
           {greeting}, {user?.displayName?.split(' ')[0] || 'Admin'}
@@ -305,7 +305,7 @@ export default function SuperAdminDashboard() {
         </p>
       </div>
 
-      {/* "€"€ Stats Grid "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Stats Grid """""""""""""""""""""""""""""""""" */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard
           icon={Building2}
@@ -346,7 +346,7 @@ export default function SuperAdminDashboard() {
         />
       </div>
 
-      {/* "€"€ Quick Actions "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Quick Actions """"""""""""""""""""""""""""""" */}
       <div>
         <h2 className="text-lg font-semibold text-slate-800 mb-4">Quick Actions</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -374,7 +374,7 @@ export default function SuperAdminDashboard() {
         </div>
       </div>
 
-      {/* "€"€ Bottom Grid "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Bottom Grid """"""""""""""""""""""""""""""""" */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Plan Distribution */}
         <div className="bg-white rounded-xl border border-slate-200 p-6">
@@ -406,7 +406,7 @@ export default function SuperAdminDashboard() {
         </div>
       </div>
 
-      {/* "€"€ Platform Info "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* "" Platform Info """"""""""""""""""""""""""""""" */}
       <div className="bg-white rounded-xl border border-slate-200 p-6">
         <div className="flex items-center gap-3 mb-4">
           <Globe className="w-5 h-5 text-slate-400" />

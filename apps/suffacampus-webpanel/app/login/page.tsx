@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
@@ -20,7 +20,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
 
-  // "€"€ White-label branding "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€
+  // "" White-label branding """""""""""""""""""""""""
   const [branding, setBranding] = useState<SchoolBranding | null>(null);
   useEffect(() => {
     const unsub = SettingsService.subscribeToSettings((settings) => {
@@ -214,7 +214,7 @@ export default function LoginPage() {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="€¢€¢€¢€¢€¢€¢€¢€¢€¢€¢"
+                    placeholder="Enter your password"
                     disabled={isLoading}
                     style={{ caretColor: '#000000', color: '#1e293b' }}
                     className={`block w-full h-[52px] pl-12 pr-4 bg-slate-200 border-2 ${errors.password

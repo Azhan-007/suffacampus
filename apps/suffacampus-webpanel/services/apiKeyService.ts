@@ -1,4 +1,4 @@
-﻿import { apiFetch } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 import {
   ApiKey,
   ApiKeyStatus,
@@ -59,7 +59,7 @@ export interface PermissionGroup {
 export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
     category: 'Students',
-    icon: '👨‍🎓',
+    icon: '',
     permissions: [
       { value: 'students:read', label: 'Read Students', description: 'View student profiles and lists' },
       { value: 'students:write', label: 'Write Students', description: 'Create, update, delete students' },
@@ -67,7 +67,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Teachers',
-    icon: '👩‍🏫',
+    icon: '',
     permissions: [
       { value: 'teachers:read', label: 'Read Teachers', description: 'View teacher profiles' },
       { value: 'teachers:write', label: 'Write Teachers', description: 'Manage teacher records' },
@@ -75,7 +75,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Classes',
-    icon: '📚',
+    icon: '',
     permissions: [
       { value: 'classes:read', label: 'Read Classes', description: 'View class information' },
       { value: 'classes:write', label: 'Write Classes', description: 'Manage classes and sections' },
@@ -83,7 +83,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Attendance',
-    icon: '📋',
+    icon: '',
     permissions: [
       { value: 'attendance:read', label: 'Read Attendance', description: 'View attendance records' },
       { value: 'attendance:write', label: 'Write Attendance', description: 'Mark and update attendance' },
@@ -91,7 +91,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Fees',
-    icon: '💰',
+    icon: '',
     permissions: [
       { value: 'fees:read', label: 'Read Fees', description: 'View fee records and invoices' },
       { value: 'fees:write', label: 'Write Fees', description: 'Create and manage fees' },
@@ -99,7 +99,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Events',
-    icon: '📅',
+    icon: '',
     permissions: [
       { value: 'events:read', label: 'Read Events', description: 'View school events' },
       { value: 'events:write', label: 'Write Events', description: 'Manage school events' },
@@ -107,7 +107,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Results',
-    icon: '📊',
+    icon: '',
     permissions: [
       { value: 'results:read', label: 'Read Results', description: 'View exam results' },
       { value: 'results:write', label: 'Write Results', description: 'Manage exam results' },
@@ -115,7 +115,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Library',
-    icon: '📖',
+    icon: '',
     permissions: [
       { value: 'library:read', label: 'Read Library', description: 'View book inventory' },
       { value: 'library:write', label: 'Write Library', description: 'Manage library records' },
@@ -123,7 +123,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Timetable',
-    icon: '🗓️',
+    icon: '',
     permissions: [
       { value: 'timetable:read', label: 'Read Timetable', description: 'View schedules' },
       { value: 'timetable:write', label: 'Write Timetable', description: 'Manage schedules' },
@@ -131,7 +131,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     category: 'Settings',
-    icon: '⚙️',
+    icon: '',
     permissions: [
       { value: 'settings:read', label: 'Read Settings', description: 'View school settings' },
       { value: 'settings:write', label: 'Write Settings', description: 'Modify school settings' },

@@ -1,4 +1,4 @@
-﻿import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { Result } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ export class ResultService {
   }
 
   /**
-   * Get results by class  -  backend: GET /results?classId=…&sectionId=…
+   * Get results by class  -  backend: GET /results?classId=&sectionId=
    */
   static async getResultsByClass(
     classId: string,
@@ -183,7 +183,7 @@ export class ResultService {
   }
 
   /**
-   * Get results by exam  -  backend: GET /results?examType=…&examName=…
+   * Get results by exam  -  backend: GET /results?examType=&examName=
    */
   static async getResultsByExam(
     examType: string,

@@ -1,9 +1,9 @@
-﻿'use client';
+'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import type { FilterChip } from '@/components/common/FilterChips';
 
-// ── Types ────────────────────────────────────────────────────────────
+//  Types 
 
 export type SortDir = 'asc' | 'desc';
 
@@ -35,30 +35,30 @@ export interface UseCrudListOptions<T, SortField extends string> {
 }
 
 export interface UseCrudListReturn<T, SortField extends string> {
-  // ── Search ──
+  //  Search 
   searchTerm: string;
   setSearchTerm: (term: string) => void;
 
-  // ── Sort ──
+  //  Sort 
   sortField: SortField;
   sortDir: SortDir;
   toggleSort: (field: SortField) => void;
   /** Spread these onto <SortableHeader> */
   sortProps: { sortField: SortField; sortDir: SortDir; onSort: (field: SortField) => void };
 
-  // ── Pagination ──
+  //  Pagination 
   page: number;
   setPage: (page: number) => void;
   pageSize: number;
   setPageSize: (size: number) => void;
   totalPages: number;
 
-  // ── Derived data ──
+  //  Derived data 
   filtered: T[];
   sorted: T[];
   paginated: T[];
 
-  // ── Selection ──
+  //  Selection 
   selectedIds: Set<string>;
   setSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   allOnPageSelected: boolean;
@@ -67,15 +67,15 @@ export interface UseCrudListReturn<T, SortField extends string> {
   toggleSelectAll: () => void;
   clearSelection: () => void;
 
-  // ── Helpers ──
+  //  Helpers 
   /** Builds the search chip for the filter chips bar */
   searchChip: FilterChip | null;
 }
 
-// ── Hook ─────────────────────────────────────────────────────────────
+//  Hook 
 
 /**
- * Encapsulates the search → filter → sort → paginate → select pipeline
+ * Encapsulates the search  filter  sort  paginate  select pipeline
  * that is identical across every CRUD page.
  *
  * Each page only needs to provide:
@@ -96,21 +96,21 @@ export function useCrudList<T extends { id: string }, SortField extends string>(
     compareFn,
   } = options;
 
-  // ── Search state ──
+  //  Search state 
   const [searchTerm, setSearchTerm] = useState('');
 
-  // ── Sort state ──
+  //  Sort state 
   const [sortField, setSortField] = useState<SortField>(defaultSortField);
   const [sortDir, setSortDir] = useState<SortDir>(defaultSortDir);
 
-  // ── Pagination state ──
+  //  Pagination state 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(defaultPageSize);
 
-  // ── Selection state ──
+  //  Selection state 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // ── Filter → Sort → Paginate pipeline ──
+  //  Filter  Sort  Paginate pipeline 
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const filtered = useMemo(() => filterFn(items, searchTerm), [items, searchTerm, ...filterDeps]);
@@ -131,11 +131,11 @@ export function useCrudList<T extends { id: string }, SortField extends string>(
     return sorted.slice(start, start + pageSize);
   }, [sorted, page, pageSize]);
 
-  // ── Reset page when filters/sort change ──
+  //  Reset page when filters/sort change 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setPage(1); }, [searchTerm, sortField, sortDir, ...filterDeps]);
 
-  // ── Sort toggle ──
+  //  Sort toggle 
   const toggleSort = useCallback((field: SortField) => {
     if (sortField === field) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -145,7 +145,7 @@ export function useCrudList<T extends { id: string }, SortField extends string>(
     }
   }, [sortField]);
 
-  // ── Selection helpers ──
+  //  Selection helpers 
   const allOnPageSelected = paginated.length > 0 && paginated.every((item) => selectedIds.has(item.id));
   const someOnPageSelected = paginated.some((item) => selectedIds.has(item.id));
 
@@ -172,7 +172,7 @@ export function useCrudList<T extends { id: string }, SortField extends string>(
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  // ── Search chip ──
+  //  Search chip 
   const searchChip: FilterChip | null = searchTerm
     ? { key: 'search', label: `"${searchTerm}"`, clear: () => setSearchTerm('') }
     : null;

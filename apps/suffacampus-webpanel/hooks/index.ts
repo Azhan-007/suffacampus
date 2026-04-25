@@ -1,4 +1,4 @@
-// ── Barrel export for hooks ──────────────────────────────────────────
+//  Barrel export for hooks 
 
 export { useApiQuery, useApiMutation } from './useApiQuery';
 export type { UseApiQueryOptions, UseApiMutationOptions } from './useApiQuery';

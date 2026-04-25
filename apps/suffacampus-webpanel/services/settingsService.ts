@@ -1,4 +1,4 @@
-﻿import { apiFetch } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 import { auth } from '@/lib/firebase';
 import { PUBLIC_API_URL } from '@/lib/runtime-config';
 import { getSessionAccessToken, setSessionAccessToken } from '@/lib/session-token';
@@ -271,10 +271,10 @@ export class SettingsService {
   /** Get supported currencies */
   static getSupportedCurrencies() {
     return [
-      { value: 'INR', label: 'Indian Rupee (₹)' },
+      { value: 'INR', label: 'Indian Rupee ()' },
       { value: 'USD', label: 'US Dollar ($)' },
-      { value: 'EUR', label: 'Euro (€)' },
-      { value: 'GBP', label: 'British Pound (£)' },
+      { value: 'EUR', label: 'Euro ()' },
+      { value: 'GBP', label: 'British Pound ()' },
     ];
   }
 

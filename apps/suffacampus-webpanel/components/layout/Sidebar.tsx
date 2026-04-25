@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useCallback, useRef } from 'react';
 import Link from 'next/link';
@@ -137,7 +137,7 @@ export default function Sidebar({ collapsed, onToggle, onCloseMobile }: SidebarP
         borderRight: '1px solid var(--sidebar-border, #e2e8f0)',
       }}
     >
-      {/* "€"€"€ Header "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* """ Header """""""""""""""""""""""""""""""""""""" */}
       <div className={`flex items-center shrink-0 ${collapsed ? 'flex-col gap-1.5 pt-4 pb-2 px-2' : 'gap-3 px-5 py-5'}`}>
         <div
           className={`
@@ -195,17 +195,17 @@ export default function Sidebar({ collapsed, onToggle, onCloseMobile }: SidebarP
         )}
       </div>
 
-      {/* "€"€"€ School selector (SuperAdmin, expanded) "€"€"€"€"€"€ */}
+      {/* """ School selector (SuperAdmin, expanded) """""" */}
       {!collapsed && superAdmin && availableSchools.length > 1 && (
         <div className="px-4 pb-3">
           <SchoolSelector compact />
         </div>
       )}
 
-      {/* "€"€"€ Divider "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* """ Divider """"""""""""""""""""""""""""""""""""" */}
       <div className={`shrink-0 mx-auto ${collapsed ? 'w-8 h-px' : 'w-[calc(100%-32px)] h-px'}`} style={{ backgroundColor: 'var(--sidebar-divider, #f1f5f9)' }} />
 
-      {/* "€"€"€ Nav "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* """ Nav """"""""""""""""""""""""""""""""""""""""" */}
       <nav ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden sidebar-scroll py-3" aria-label="Main navigation">
         <ul className={`flex flex-col gap-0.5 ${collapsed ? 'items-center px-2' : 'px-3'}`}>
           {items.map((item, index) => {
@@ -288,7 +288,7 @@ export default function Sidebar({ collapsed, onToggle, onCloseMobile }: SidebarP
         </ul>
       </nav>
 
-      {/* "€"€"€ Footer "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€ */}
+      {/* """ Footer """""""""""""""""""""""""""""""""""""" */}
       {!collapsed && (
         <div className="shrink-0 px-5 py-3" style={{ borderTop: '1px solid var(--sidebar-footer-border, #f1f5f9)' }}>
           <p className="text-xs text-center font-medium select-none" style={{ color: 'var(--sidebar-footer, #94a3b8)' }}>

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -79,7 +79,7 @@ function ChildCard({
         <div className="flex-1 text-center">
           <p className="text-xs text-slate-400">Pending Fees</p>
           <p className={`text-sm font-bold ${child.pendingFees > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-            {child.pendingFees > 0 ? `₹${child.pendingFees.toLocaleString()}` : '₹0'}
+            {child.pendingFees > 0 ? `${child.pendingFees.toLocaleString()}` : '0'}
           </p>
         </div>
         <div className="flex-1 text-center">
@@ -278,7 +278,7 @@ export default function ParentPortalPage() {
                 <StatBadge
                   icon={IndianRupee}
                   label="Pending Fees"
-                  value={selectedChildData.pendingFees > 0 ? `₹${selectedChildData.pendingFees.toLocaleString()}` : '₹0'}
+                  value={selectedChildData.pendingFees > 0 ? `${selectedChildData.pendingFees.toLocaleString()}` : '0'}
                   color={selectedChildData.pendingFees > 0 ? 'red' : 'emerald'}
                 />
                 <StatBadge
@@ -368,7 +368,7 @@ export default function ParentPortalPage() {
                               {fees.map((f) => (
                                 <tr key={f.id} className="border-b border-slate-50 last:border-0">
                                   <td className="py-2.5 text-slate-700">{f.feeType}</td>
-                                  <td className="py-2.5 font-semibold text-slate-800">₹{f.amount.toLocaleString()}</td>
+                                  <td className="py-2.5 font-semibold text-slate-800">{f.amount.toLocaleString()}</td>
                                   <td className="py-2.5 text-slate-500 text-xs">{f.dueDate}</td>
                                   <td className="py-2.5">
                                     <span className={`

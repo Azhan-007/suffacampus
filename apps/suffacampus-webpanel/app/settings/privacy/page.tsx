@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -24,14 +24,14 @@ const STATUS_CONFIG: Record<DataRequestStatus, { label: string; color: string; b
 };
 
 const DATA_SCOPES = [
-  { id: 'students', label: 'Students', description: 'Student personal data, enrollment records', icon: '🎓' },
-  { id: 'teachers', label: 'Teachers', description: 'Teacher profiles and employment data', icon: '👨‍🏫' },
-  { id: 'attendance', label: 'Attendance', description: 'Attendance logs and history', icon: '📋' },
-  { id: 'fees', label: 'Fees', description: 'Payment and billing records', icon: '💰' },
-  { id: 'results', label: 'Results', description: 'Examination results and grades', icon: '📊' },
-  { id: 'events', label: 'Events', description: 'Event participation records', icon: '📅' },
-  { id: 'library', label: 'Library', description: 'Book issue/return history', icon: '📚' },
-  { id: 'audit', label: 'Audit Logs', description: 'System action audit trail', icon: '📜' },
+  { id: 'students', label: 'Students', description: 'Student personal data, enrollment records', icon: '' },
+  { id: 'teachers', label: 'Teachers', description: 'Teacher profiles and employment data', icon: '' },
+  { id: 'attendance', label: 'Attendance', description: 'Attendance logs and history', icon: '' },
+  { id: 'fees', label: 'Fees', description: 'Payment and billing records', icon: '' },
+  { id: 'results', label: 'Results', description: 'Examination results and grades', icon: '' },
+  { id: 'events', label: 'Events', description: 'Event participation records', icon: '' },
+  { id: 'library', label: 'Library', description: 'Book issue/return history', icon: '' },
+  { id: 'audit', label: 'Audit Logs', description: 'System action audit trail', icon: '' },
 ];
 
 export default function DataPrivacyPage() {

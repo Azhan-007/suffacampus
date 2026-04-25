@@ -1,4 +1,4 @@
-﻿// -- Design System Tokens ---------------------------------------------
+// -- Design System Tokens ---------------------------------------------
 // Centralized theme tokens for consistent styling across the application
 
 export const colors = {
@@ -64,19 +64,19 @@ export const radii = {
 // Currency Configuration
 export const CURRENCY = {
   code: 'INR',
-  symbol: '₹',
+  symbol: '',
   locale: 'en-IN',
 } as const;
 
 export function formatCurrency(amount: number): string {
-  return `₹${amount.toLocaleString('en-IN')}`;
+  return `${amount.toLocaleString('en-IN')}`;
 }
 
 export function formatCurrencyCompact(amount: number): string {
-  if (amount >= 10000000) return `₹${(amount / 10000000).toFixed(1)}Cr`;
-  if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-  if (amount >= 1000) return `₹${(amount / 1000).toFixed(1)}K`;
-  return `₹${amount.toLocaleString('en-IN')}`;
+  if (amount >= 10000000) return `${(amount / 10000000).toFixed(1)}Cr`;
+  if (amount >= 100000) return `${(amount / 100000).toFixed(1)}L`;
+  if (amount >= 1000) return `${(amount / 1000).toFixed(1)}K`;
+  return `${amount.toLocaleString('en-IN')}`;
 }
 
 // Avatar color palette for initials-based avatars

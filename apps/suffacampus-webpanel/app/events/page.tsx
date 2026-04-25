@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -35,7 +35,7 @@ export default function EventsPage() {
   const schoolId = currentSchool?.id || user?.schoolId || '';
   const queryClient = useQueryClient();
 
-  // "€"€ Data fetching via React Query "€"€
+  // "" Data fetching via React Query ""
   const { data: events = [], isLoading: loading, dataUpdatedAt } = useApiQuery<Event[]>({
     queryKey: ['events', schoolId],
     path: '/events?limit=1000',
@@ -213,7 +213,7 @@ export default function EventsPage() {
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
             <div className="flex items-center gap-2"><h3 className="text-[14px] font-semibold text-slate-700">Event Records</h3><span className="text-xs font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded tabular-nums border border-slate-100">{sortedEvents.length}</span></div>
-            <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Showing {sortedEvents.length > 0 ? (page - 1) * pageSize + 1 : 0}€"{Math.min(page * pageSize, sortedEvents.length)}</span><div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div></div>
+            <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Showing {sortedEvents.length > 0 ? (page - 1) * pageSize + 1 : 0}"{Math.min(page * pageSize, sortedEvents.length)}</span><div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div></div>
           </div>
           {paginatedEvents.length > 0 ? (
             <>
@@ -241,7 +241,7 @@ export default function EventsPage() {
                         {isToday(new Date(ev.eventDate)) && <span className="text-xs text-amber-600 bg-amber-50 px-1 py-0.5 rounded ml-1">Today</span>}
                         {ev.endDate && <p className="text-xs text-slate-400">to {format(new Date(ev.endDate), 'dd MMM yyyy')}</p>}</div>
                       </td>
-                      <td className="px-4 py-3"><span className="text-sm text-slate-600">{ev.location || '€"'}</span></td>
+                      <td className="px-4 py-3"><span className="text-sm text-slate-600">{ev.location || '"'}</span></td>
                       <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{(ev.targetAudience || []).slice(0, 2).map((a, i) => (<span key={i} className="text-xs font-medium text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">{a}</span>))}{(ev.targetAudience?.length || 0) > 2 && <span className="text-xs text-slate-400">+{(ev.targetAudience?.length || 0) - 2}</span>}</div></td>
                       <td className="px-4 py-3"><div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150"><button onClick={() => handleViewEvent(ev)} className="p-1.5 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"><Eye className="w-4 h-4" /></button><button onClick={() => handleOpenModal(ev)} className="p-1.5 rounded-md text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDelete(ev.id, ev.title)} className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"><Trash2 className="w-4 h-4" /></button></div></td>
                     </tr>

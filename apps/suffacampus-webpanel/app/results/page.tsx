@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -35,7 +35,7 @@ export default function ResultsPage() {
   const { currentSchool } = useAuthStore();
   const queryClient = useQueryClient();
 
-  // "€"€ Data fetching via React Query "€"€
+  // "" Data fetching via React Query ""
   const { data: results = [], isLoading: loading, dataUpdatedAt } = useApiQuery<Result[]>({
     queryKey: ['results'],
     path: '/results?limit=1000',
@@ -228,7 +228,7 @@ export default function ResultsPage() {
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
             <div className="flex items-center gap-2"><h3 className="text-[14px] font-semibold text-slate-700">Result Records</h3><span className="text-xs font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded tabular-nums border border-slate-100">{sortedResults.length}</span></div>
             <div className="flex items-center gap-3">
-              <span className="text-xs text-slate-400">Showing {sortedResults.length > 0 ? (page - 1) * pageSize + 1 : 0}€"{Math.min(page * pageSize, sortedResults.length)}</span>
+              <span className="text-xs text-slate-400">Showing {sortedResults.length > 0 ? (page - 1) * pageSize + 1 : 0}"{Math.min(page * pageSize, sortedResults.length)}</span>
               <div className="w-[100px]"><Select value={String(pageSize)} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} options={PAGE_SIZE_OPTIONS.map(n => ({ value: String(n), label: `${n} rows` }))} /></div>
             </div>
           </div>
@@ -261,7 +261,7 @@ export default function ResultsPage() {
                           <span className="text-xs font-semibold text-slate-600 tabular-nums">{r.percentage || 0}%</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3"><span className={`text-xs font-semibold px-2 py-0.5 rounded ${gradeColor[r.grade || 'F'] || 'text-slate-600 bg-slate-50'}`}>{r.grade || '€"'}</span></td>
+                      <td className="px-4 py-3"><span className={`text-xs font-semibold px-2 py-0.5 rounded ${gradeColor[r.grade || 'F'] || 'text-slate-600 bg-slate-50'}`}>{r.grade || '"'}</span></td>
                       <td className="px-4 py-3"><span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded ${r.status === 'Pass' ? 'text-emerald-700 bg-emerald-50' : 'text-red-600 bg-red-50'}`}><span className={`w-1.5 h-1.5 rounded-full ${r.status === 'Pass' ? 'bg-emerald-500' : 'bg-red-500'}`} />{r.status}</span></td>
                       <td className="px-4 py-3"><div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150"><button onClick={() => handleViewResult(r)} className="p-1.5 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"><Eye className="w-4 h-4" /></button><button onClick={() => handleOpenModal(r)} className="p-1.5 rounded-md text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"><Pencil className="w-4 h-4" /></button><button onClick={() => handleDelete(r.id, r.studentName)} className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"><Trash2 className="w-4 h-4" /></button></div></td>
                     </tr>
@@ -309,7 +309,7 @@ export default function ResultsPage() {
                 <Input label="Marks Obtained *" type="number" value={formData.marksObtained.toString()} onChange={e => setFormData({ ...formData, marksObtained: parseFloat(e.target.value) || 0 })} error={formErrors.marksObtained} />
                 <Input label="Total Marks *" type="number" value={formData.totalMarks.toString()} onChange={e => setFormData({ ...formData, totalMarks: parseInt(e.target.value) || 0 })} error={formErrors.totalMarks} />
                 <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Percentage</label><div className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800">{formData.percentage}%</div></div>
-                <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Grade</label><div className={`px-4 py-2.5 border rounded-lg text-sm font-semibold text-center ${gradeColor[formData.grade] || 'text-slate-600 bg-slate-50'}`}>{formData.grade || '€"'}</div></div>
+                <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Grade</label><div className={`px-4 py-2.5 border rounded-lg text-sm font-semibold text-center ${gradeColor[formData.grade] || 'text-slate-600 bg-slate-50'}`}>{formData.grade || '"'}</div></div>
               </div>
               <div className="flex items-center gap-3 mt-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
                 <span className="text-xs font-medium text-slate-500">Status:</span>
@@ -330,10 +330,10 @@ export default function ResultsPage() {
                 <div className="flex-1 min-w-0">
                   <h3 className="text-lg font-semibold text-slate-800">{viewingResult.studentName}</h3>
                   <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${gradeColor[viewingResult.grade || 'F']}`}>Grade: {viewingResult.grade || '€"'}</span>
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${gradeColor[viewingResult.grade || 'F']}`}>Grade: {viewingResult.grade || '"'}</span>
                     <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded ${viewingResult.status === 'Pass' ? 'text-emerald-700 bg-emerald-50' : 'text-red-600 bg-red-50'}`}>{viewingResult.status}</span>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">{viewingResult.percentage}% €" {viewingResult.marksObtained}/{viewingResult.totalMarks} marks</p>
+                  <p className="text-xs text-slate-400 mt-1">{viewingResult.percentage}% " {viewingResult.marksObtained}/{viewingResult.totalMarks} marks</p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

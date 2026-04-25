@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -99,7 +99,7 @@ export default function StudentsPage() {
   const schoolId = currentSchool?.id || user?.schoolId || 'default';
   const queryClient = useQueryClient();
 
-  // "€"€ Data fetching via React Query "€"€
+  // "" Data fetching via React Query ""
   const { data: students = [], isLoading: loading, dataUpdatedAt } = useApiQuery<Student[]>({
     queryKey: ['students', schoolId],
     path: '/students',
@@ -115,7 +115,7 @@ export default function StudentsPage() {
 
   const lastSynced = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
 
-  // "€"€ Fetch classes for dynamic class/section dropdowns "€"€
+  // "" Fetch classes for dynamic class/section dropdowns ""
   const { data: classesRaw = [], isLoading: classesLoading, error: classesError } = useApiQuery<Class[]>({
     queryKey: ['classes', schoolId],
     path: '/classes/all',
@@ -144,20 +144,20 @@ export default function StudentsPage() {
     [classes],
   );
 
-  /** All unique sections across all classes €" used for list filters */
+  /** All unique sections across all classes " used for list filters */
   const allSectionOptions = useMemo(() => {
     const names = new Set<string>();
     classes.filter(c => c.isActive !== false).forEach(c => c.sections?.forEach(s => names.add(s.sectionName)));
     return [...names].sort().map(n => ({ value: n, label: `Section ${n}` }));
   }, [classes]);
 
-  // "€"€ Entity-specific filter state "€"€
+  // "" Entity-specific filter state ""
   const [filterClass, setFilterClass] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [filterGender, setFilterGender] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('active');
 
-  // "€"€ CRUD List hook (search, filter, sort, paginate, select) "€"€
+  // "" CRUD List hook (search, filter, sort, paginate, select) ""
   const list = useCrudList<Student, SortField>({
     items: students,
     defaultSortField: 'name',
@@ -193,7 +193,7 @@ export default function StudentsPage() {
     },
   });
 
-  // "€"€ CRUD Modal hook (modal, form, delete dialog) "€"€
+  // "" CRUD Modal hook (modal, form, delete dialog) ""
   const modal = useCrudModal<Student, StudentFormData>({
     defaultFormData: DEFAULT_FORM_DATA,
     entityToForm,
@@ -206,7 +206,7 @@ export default function StudentsPage() {
     return cls.sections.map(s => ({ value: s.sectionName, label: `Section ${s.sectionName}` }));
   }, [classes, modal.formData.classId, allSectionOptions]);
 
-  // "€"€ Extra UI state "€"€
+  // "" Extra UI state ""
   const [viewTab, setViewTab] = useState<'personal' | 'academic' | 'contact'>('personal');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
   const [showSuccess, setShowSuccess] = useState(false);
@@ -216,7 +216,7 @@ export default function StudentsPage() {
   const [showAdditional, setShowAdditional] = useState(false);
   const [isCreatingDefaultClass, setIsCreatingDefaultClass] = useState(false);
 
-  // "€"€"€ Derived stats "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€
+  // """ Derived stats """"""""""""""""""""""""""""""""""""""""
   const activeCount = useMemo(() => students.filter(s => s.isActive).length, [students]);
   const inactiveCount = useMemo(() => students.filter(s => !s.isActive).length, [students]);
 
@@ -226,7 +226,7 @@ export default function StudentsPage() {
     return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
   }, [students]);
 
-  // "€"€ Active filter chips "€"€
+  // "" Active filter chips ""
   const activeFilters = useMemo(() => {
     const chips: FilterChip[] = [];
     if (filterClass) chips.push({ key: 'class', label: classMap[filterClass] || filterClass, clear: () => setFilterClass('') });
@@ -236,7 +236,7 @@ export default function StudentsPage() {
     return chips;
   }, [filterClass, filterSection, filterGender, list.searchChip, classMap]);
 
-  // "€"€ Wrap close modal to also reset custom section "€"€
+  // "" Wrap close modal to also reset custom section ""
   const handleCloseModal = useCallback(() => {
     modal.closeModal();
     setIsCustomSection(false);
@@ -249,7 +249,7 @@ export default function StudentsPage() {
     modal.openModal(student);
   }, [modal]);
 
-  // "€"€"€ Form helpers "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€
+  // """ Form helpers """""""""""""""""""""""""""""""""""""""""
   const validateForm = () => {
     const errors = validateFormData(studentSchema, modal.formData);
     modal.setFormErrors(errors ?? {});
@@ -408,7 +408,7 @@ export default function StudentsPage() {
     setFilterGender(''); setFilterStatus('active');
   };
 
-  // "€"€"€ Loading "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€
+  // """ Loading """"""""""""""""""""""""""""""""""""""""""""""
   if (loading) {
     return (
       <DashboardLayout>
@@ -426,7 +426,7 @@ export default function StudentsPage() {
     <DashboardLayout>
       <div className="space-y-8">
 
-        {/* ******************* HEADER ******************* */}
+        {/* ******************* HEADER ******************* */}
         <div className="flex items-center justify-between">
           <div>
               <h1 className="text-3xl font-semibold text-slate-900 tracking-tight">Students</h1>
@@ -462,7 +462,7 @@ export default function StudentsPage() {
           </div>
         </div>
 
-        {/* ******************* STAT CARDS ******************* */}
+        {/* ******************* STAT CARDS ******************* */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Total Students"
@@ -499,7 +499,7 @@ export default function StudentsPage() {
           />
         </div>
 
-        {/* ******************* FILTERS ******************* */}
+        {/* ******************* FILTERS ******************* */}
         <div className="bg-slate-50 rounded-xl border border-slate-200 p-5" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
           {/* Search + dropdowns */}
           <div className="flex flex-col lg:flex-row gap-3">
@@ -572,7 +572,7 @@ export default function StudentsPage() {
           </div>
         </div>
 
-        {/* ******************* TABLE ******************* */}
+        {/* ******************* TABLE ******************* */}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden" style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
           {/* Table header bar */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
@@ -603,7 +603,7 @@ export default function StudentsPage() {
             </div>
             <div className="flex items-center gap-3">
               <span className="text-xs text-slate-400">
-                Showing {(list.page - 1) * list.pageSize + 1}€"{Math.min(list.page * list.pageSize, list.sorted.length)}
+                Showing {(list.page - 1) * list.pageSize + 1}"{Math.min(list.page * list.pageSize, list.sorted.length)}
               </span>
               <div className="w-[100px]">
                 <Select
@@ -874,7 +874,7 @@ export default function StudentsPage() {
           )}
         </div>
 
-        {/* ******************* ADD / EDIT MODAL ******************* */}
+        {/* ******************* ADD / EDIT MODAL ******************* */}
         <Modal
           isOpen={modal.isModalOpen}
           onClose={handleCloseModal}
@@ -1091,7 +1091,7 @@ export default function StudentsPage() {
 
             <div className="h-px bg-slate-100" />
 
-            {/* "€"€ Additional Information (collapsible) "€"€ */}
+            {/* "" Additional Information (collapsible) "" */}
             <div>
               <button
                 type="button"
@@ -1391,7 +1391,7 @@ export default function StudentsPage() {
           </div>
         </Modal>
 
-        {/* ******************* VIEW MODAL ******************* */}
+        {/* ******************* VIEW MODAL ******************* */}
         <Modal
           isOpen={modal.isViewModalOpen}
           onClose={() => modal.setIsViewModalOpen(false)}
@@ -1462,7 +1462,7 @@ export default function StudentsPage() {
 
               {viewTab === 'academic' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <InfoRow icon={BookOpen} label="Class & Section" value={`${modal.viewingEntity.classId.replace('class-', 'Class ')} €" Section ${modal.viewingEntity.sectionId}`} />
+                  <InfoRow icon={BookOpen} label="Class & Section" value={`${modal.viewingEntity.classId.replace('class-', 'Class ')} " Section ${modal.viewingEntity.sectionId}`} />
                   <InfoRow icon={Hash} label="Roll Number" value={modal.viewingEntity.rollNumber} mono />
                   <InfoRow icon={Calendar} label="Enrollment Date" value={format(new Date(modal.viewingEntity.enrollmentDate), 'MMMM dd, yyyy')} />
                   <InfoRow icon={Clock} label="Record Created" value={format(new Date(modal.viewingEntity.createdAt), 'MMMM dd, yyyy')} />
@@ -1490,7 +1490,7 @@ export default function StudentsPage() {
           )}
         </Modal>
 
-        {/* ******************* DELETE DIALOG ******************* */}
+        {/* ******************* DELETE DIALOG ******************* */}
         <ConfirmDialog
           isOpen={modal.deleteDialog.isOpen}
           onClose={modal.closeDelete}
@@ -1504,7 +1504,7 @@ export default function StudentsPage() {
         />
       </div>
 
-      {/* ****** CREDENTIALS MODAL ****** */}
+      {/* ****** CREDENTIALS MODAL ****** */}
       {createdCredentials && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6">
@@ -1528,7 +1528,7 @@ export default function StudentsPage() {
                 <p className="text-base font-mono font-semibold text-slate-800">{createdCredentials.password}</p>
               </div>
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex gap-2">
-                <span className="text-blue-500 text-sm">„¹ï¸</span>
+                <span className="text-blue-500 text-sm"></span>
                 <p className="text-xs text-blue-700">Student can change their password after first login. These credentials are only shown once.</p>
               </div>
             </div>
@@ -1555,7 +1555,7 @@ export default function StudentsPage() {
         </div>
       )}
 
-      {/* ****** SUCCESS ANIMATION OVERLAY ****** */}
+      {/* ****** SUCCESS ANIMATION OVERLAY ****** */}
       {showSuccess && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
           <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-8 flex flex-col items-center gap-3 animate-scale-in">
@@ -1571,7 +1571,7 @@ export default function StudentsPage() {
   );
 }
 
-// "€"€"€ View Modal Info Row Component "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€
+// """ View Modal Info Row Component """"""""""""""""""""""""""
 function InfoRow({ icon: Icon, label, value, mono, span2 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;

@@ -1,4 +1,4 @@
-﻿import { apiFetch, apiFetchPaginated, ApiError, PaginatedResponse } from '@/lib/api';
+import { apiFetch, apiFetchPaginated, ApiError, PaginatedResponse } from '@/lib/api';
 import { Student } from '@/types';
 
 // ---------------------------------------------------------------------------

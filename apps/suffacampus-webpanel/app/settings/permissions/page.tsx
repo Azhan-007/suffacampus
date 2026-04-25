@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -292,7 +292,7 @@ export default function PermissionsPage() {
                             } disabled:cursor-not-allowed`}
                             title={allEnabled ? 'Revoke all' : 'Grant all'}
                           >
-                            {allEnabled ? '✓' : noneEnabled ? '-' : '~'}
+                            {allEnabled ? '' : noneEnabled ? '-' : '~'}
                           </button>
                         </td>
                       </tr>

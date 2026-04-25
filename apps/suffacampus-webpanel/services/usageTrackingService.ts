@@ -1,4 +1,4 @@
-﻿import { apiFetch } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 import { UsageRecord, UsageAlert, SubscriptionPlan } from '@/types';
 import { SUBSCRIPTION_PLANS } from './subscriptionService';
 

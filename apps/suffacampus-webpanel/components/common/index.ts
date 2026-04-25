@@ -1,4 +1,4 @@
-﻿// -- Barrel export for components/common ------------------------------
+// -- Barrel export for components/common ------------------------------
 // One-stop import for all shared UI components.
 
 export { default as Badge } from './Badge';

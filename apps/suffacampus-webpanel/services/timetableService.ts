@@ -1,4 +1,4 @@
-﻿import { apiFetch, ApiError } from '@/lib/api';
+import { apiFetch, ApiError } from '@/lib/api';
 import { Timetable, Period } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ export const getTimetableById = async (
 };
 
 /**
- * Get timetables by class and optional section  -  backend: GET /timetable?classId=…&sectionId=…
+ * Get timetables by class and optional section  -  backend: GET /timetable?classId=&sectionId=
  */
 export const getTimetablesByClass = async (
   classId: string,

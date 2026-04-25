@@ -1,4 +1,4 @@
-﻿// -- Analytics Utilities -----------------------------------------------
+// -- Analytics Utilities -----------------------------------------------
 // Computation helpers for deriving insights from school data.
 // All functions are pure, stateless, and operate on typed domain arrays.
 

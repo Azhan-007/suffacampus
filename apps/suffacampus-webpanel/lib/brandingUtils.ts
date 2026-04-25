@@ -1,4 +1,4 @@
-﻿// "€"€ White-Label Branding Utilities "€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€"€
+// "" White-Label Branding Utilities """"""""""""""""""""""""""""""""""""
 // Pure helpers for generating CSS custom properties, colour variants,
 // and font configuration from a SchoolBranding object.
 
