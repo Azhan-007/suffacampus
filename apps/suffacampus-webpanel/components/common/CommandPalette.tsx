@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
@@ -205,7 +205,7 @@ export default function CommandPalette() {
             {query.trim().length >= 2 && !loading && results.length === 0 && (
               <div className="py-12 text-center">
                 <Search className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-                <p className="text-sm text-slate-400">No results for &quot;{query}&quot;</p>
+                <p className="text-sm text-slate-400">No results for "{query}"</p>
                 <p className="text-xs text-slate-300 mt-1">Try a different search term</p>
               </div>
             )}
