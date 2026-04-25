@@ -15,7 +15,7 @@ export class AttendanceError extends Error {
 }
 
 /**
- * Mark attendance for a student.
+ * Mark attendance for a student for a specific session (FN or AN).
  * Validates student exists, belongs to the same school, and prevents duplicates.
  */
 export async function markAttendance(
@@ -24,6 +24,8 @@ export async function markAttendance(
   data: MarkAttendanceInput
 ) {
   assertSchoolScope(schoolId);
+
+  const session = data.session ?? "FN";
 
   // 1. Validate student belongs to this school
   const student = await prisma.student.findUnique({
@@ -41,30 +43,47 @@ export async function markAttendance(
     throw new AttendanceError("Student not found", "STUDENT_NOT_FOUND");
   }
 
-  // 2. Prevent duplicate attendance (unique constraint will also catch this)
+  // 2. Parse date
   const attendanceDate = dateTimeFrom(data.date);
   if (!attendanceDate) {
     throw new AttendanceError("Invalid date format", "STUDENT_NOT_FOUND");
   }
 
+  // 3. Check for existing record (upsert-style: update if exists, create if not)
   const existing = await prisma.attendance.findUnique({
     where: {
-      schoolId_studentId_date: {
+      schoolId_studentId_date_session: {
         schoolId,
         studentId: data.studentId,
         date: attendanceDate,
+        session,
       },
     },
   });
 
   if (existing) {
-    throw new AttendanceError(
-      `Attendance already marked for student ${data.studentId} on ${data.date}`,
-      "DUPLICATE"
-    );
+    // Update existing record
+    const updated = await prisma.attendance.update({
+      where: { id: existing.id },
+      data: {
+        status: data.status as any,
+        markedBy,
+        remarks: data.remarks,
+      },
+    });
+
+    await writeAuditLog("UPDATE_ATTENDANCE", markedBy, schoolId, {
+      attendanceId: updated.id,
+      studentId: updated.studentId,
+      date: updated.date,
+      session,
+      status: updated.status,
+    });
+
+    return updated;
   }
 
-  // 3. Create the attendance record
+  // 4. Create new attendance record
   const record = await prisma.attendance.create({
     data: {
       schoolId,
@@ -74,6 +93,7 @@ export async function markAttendance(
       classId: data.classId,
       sectionId: data.sectionId,
       date: attendanceDate,
+      session,
       status: data.status as any,
       remarks: data.remarks,
     },
@@ -83,6 +103,7 @@ export async function markAttendance(
     attendanceId: record.id,
     studentId: record.studentId,
     date: record.date,
+    session,
     status: record.status,
     classId: record.classId,
     sectionId: record.sectionId,
@@ -97,6 +118,7 @@ export async function markAttendance(
 export type BulkMarkAttendanceItem = {
   studentId: string;
   date: string;
+  session?: string;
   status: "Present" | "Absent";
   classId: string;
   sectionId: string;
@@ -106,12 +128,14 @@ export type BulkMarkAttendanceItem = {
 
 /**
  * Fetch attendance records for a school on a given date.
+ * Optionally filter by classId, sectionId, and session.
  */
 export async function getAttendanceByDate(
   schoolId: string,
   date: string,
   classId?: string,
-  sectionId?: string
+  sectionId?: string,
+  session?: string
 ) {
   assertSchoolScope(schoolId);
 
@@ -119,6 +143,7 @@ export async function getAttendanceByDate(
   const where: any = { schoolId, date: parsedDate ?? date };
   if (classId) where.classId = classId;
   if (sectionId) where.sectionId = sectionId;
+  if (session) where.session = session;
 
   return prisma.attendance.findMany({ where, orderBy: { studentName: "asc" } });
 }
@@ -151,6 +176,7 @@ export async function updateAttendance(
     attendanceId,
     studentId: existing.studentId,
     date: existing.date,
+    session: existing.session,
     changes: data,
   });
 
@@ -178,6 +204,7 @@ export async function deleteAttendance(
     attendanceId,
     studentId: existing.studentId,
     date: existing.date,
+    session: existing.session,
     status: existing.status,
   });
 

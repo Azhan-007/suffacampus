@@ -67,19 +67,19 @@ export default async function attendanceRoutes(server: FastifyInstance) {
     }
   );
 
-  // GET /api/v1/attendance?date=YYYY-MM-DD&classId=xxx&sectionId=yyy
-  server.get<{ Querystring: { date?: string; classId?: string; sectionId?: string } }>(
+  // GET /api/v1/attendance?date=YYYY-MM-DD&classId=xxx&sectionId=yyy&session=FN
+  server.get<{ Querystring: { date?: string; classId?: string; sectionId?: string; session?: string } }>(
     "/attendance",
     { preHandler: [...preHandler, requirePermission("ATTENDANCE_VIEW")] },
     async (request, reply) => {
-      const { date, classId, sectionId } = request.query;
+      const { date, classId, sectionId, session } = request.query;
 
       // Backward compatibility: if date is omitted, return recent records
-      // so dashboard/reports pages can hydrate without a required filter.
       if (!date) {
         const where: Record<string, unknown> = { schoolId: request.schoolId };
         if (classId) where.classId = classId;
         if (sectionId) where.sectionId = sectionId;
+        if (session) where.session = session;
 
         const records = await prisma.attendance.findMany({
           where,
@@ -96,7 +96,7 @@ export default async function attendanceRoutes(server: FastifyInstance) {
         );
       }
 
-      const records = await getAttendanceByDate(request.schoolId, date, classId, sectionId);
+      const records = await getAttendanceByDate(request.schoolId, date, classId, sectionId, session);
 
       return sendSuccess(request, reply, records);
     }
@@ -114,6 +114,7 @@ export default async function attendanceRoutes(server: FastifyInstance) {
 
 
       const { classId, sectionId, date, entries } = result.data;
+      const session = (result.data as any).session ?? "FN";
       const schoolId = request.schoolId;
       const markedBy = request.user.uid;
       const attendanceDate = dateTimeFrom(date);
@@ -127,6 +128,7 @@ export default async function attendanceRoutes(server: FastifyInstance) {
         where: {
           schoolId,
           date: attendanceDate,
+          session,
           studentId: { in: studentIds },
         },
         select: { studentId: true },
@@ -149,6 +151,7 @@ export default async function attendanceRoutes(server: FastifyInstance) {
           classId,
           sectionId,
           date: attendanceDate,
+          session,
           status: entry.status,
           remarks: entry.remarks ?? null,
           markedBy,

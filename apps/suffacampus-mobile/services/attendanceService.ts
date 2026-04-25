@@ -21,6 +21,7 @@ export interface AttendanceRecord {
   classId: string;
   sectionId: string;
   date: string;
+  session?: "FN" | "AN";
   status: "Present" | "Absent";
   markedBy?: string;
   createdAt?: string;
@@ -153,6 +154,7 @@ export interface ClassAttendanceRecord {
   classId: string;
   sectionId: string;
   date: string;
+  session?: "FN" | "AN";
   status: "Present" | "Absent";
   markedBy?: string;
 }
@@ -161,6 +163,7 @@ export interface BulkAttendancePayload {
   classId: string;
   sectionId: string;
   date: string;
+  session?: "FN" | "AN";
   entries: Array<{
     studentId: string;
     status: "Present" | "Absent";
@@ -201,20 +204,21 @@ export async function getStudentsByClass(
 export async function getAttendanceByClassDate(
   classId: string,
   sectionId: string,
-  date: string
+  date: string,
+  session?: "FN" | "AN"
 ): Promise<ClassAttendanceRecord[]> {
-  return apiFetch<ClassAttendanceRecord[]>("/attendance", {
-    params: { date, classId, sectionId },
-  });
+  const params: Record<string, string> = { date, classId, sectionId };
+  if (session) params.session = session;
+  return apiFetch<ClassAttendanceRecord[]>("/attendance", { params });
 }
 
 /** Upsert a single attendance record (create or update). */
 export async function upsertAttendance(
-  record: { studentId: string; classId: string; sectionId: string; date: string; status: "Present" | "Absent"; id?: string }
+  record: { studentId: string; classId: string; sectionId: string; date: string; session?: "FN" | "AN"; status: "Present" | "Absent"; id?: string }
 ): Promise<ClassAttendanceRecord> {
-  // Strip undefined/null fields to avoid strict schema rejection
   const { id, ...payload } = record;
-  console.log(`[DEBUG] upsertAttendance: id=${id}, payload=`, JSON.stringify(payload));
+  // Ensure session defaults to FN
+  if (!payload.session) payload.session = "FN";
   
   try {
     if (id) {

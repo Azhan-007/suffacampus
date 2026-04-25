@@ -46,10 +46,31 @@ export default function AttendanceScreen() {
       const currentMonth = today.getMonth();
       const currentYear = today.getFullYear();
 
-      // Find today's sessions
-      const todayRecords = records.filter((r: any) => r.date === todayStr);
-      const todayFN = todayRecords.find((r: any) => r.session === "FN")?.status || todayRecords[0]?.status || "Not Marked";
-      const todayAN = todayRecords.find((r: any) => r.session === "AN")?.status || "Not Marked";
+      // Normalize backend date (could be ISO DateTime "2026-04-25T00:00:00.000Z" or date-only)
+      const normDate = (d: string) => d ? d.split("T")[0] : "";
+
+      // Find today's records (normalize both sides for comparison)
+      const todayRecords = records.filter((r: any) => normDate(r.date) === todayStr);
+      
+      // Backend stores a single attendance record per day (no FN/AN session split).
+      // Map the single record to the Forenoon card; Afternoon shows the same or "Not Marked".
+      let todayFN: string = "Not Marked";
+      let todayAN: string = "Not Marked";
+
+      if (todayRecords.length > 0) {
+        const fnRecord = todayRecords.find((r: any) => r.session === "FN");
+        const anRecord = todayRecords.find((r: any) => r.session === "AN");
+        
+        if (fnRecord || anRecord) {
+          // Backend supports sessions — use them directly
+          todayFN = fnRecord?.status || "Not Marked";
+          todayAN = anRecord?.status || "Not Marked";
+        } else {
+          // Single record per day — show status in both cards
+          todayFN = todayRecords[0].status;
+          todayAN = todayRecords[0].status;
+        }
+      }
 
       // Monthly stats
       const monthlyRecords = records.filter((r: any) => {

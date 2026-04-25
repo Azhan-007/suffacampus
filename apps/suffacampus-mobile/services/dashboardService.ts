@@ -349,15 +349,31 @@ export async function getTodayAttendance(
   try {
     const today = new Date().toISOString().split("T")[0];
     const data = await apiFetch<{
-      records: Array<{ date: string; session: string; status: string }>;
+      records: Array<{ date: string; session?: string; status: string }>;
       stats: { total: number; present: number; absent: number; percentage: number };
     }>(`/attendance/student/${studentId}`);
 
-    const todayRecords = (data.records ?? []).filter((r) => r.date === today);
-    const todayFN =
-      todayRecords.find((r) => r.session === "FN")?.status ?? "Not Marked";
-    const todayAN =
-      todayRecords.find((r) => r.session === "AN")?.status ?? "Not Marked";
+    // Normalize date (backend returns ISO DateTime "2026-04-25T00:00:00.000Z")
+    const normDate = (d: string) => d ? d.split("T")[0] : "";
+    const todayRecords = (data.records ?? []).filter((r) => normDate(r.date) === today);
+
+    let todayFN = "Not Marked";
+    let todayAN = "Not Marked";
+
+    if (todayRecords.length > 0) {
+      const fnRecord = todayRecords.find((r) => r.session === "FN");
+      const anRecord = todayRecords.find((r) => r.session === "AN");
+
+      if (fnRecord || anRecord) {
+        // Backend supports FN/AN sessions
+        todayFN = fnRecord?.status ?? "Not Marked";
+        todayAN = anRecord?.status ?? "Not Marked";
+      } else {
+        // Single record per day — show status in both cards
+        todayFN = todayRecords[0].status;
+        todayAN = todayRecords[0].status;
+      }
+    }
 
     return {
       todayFN,

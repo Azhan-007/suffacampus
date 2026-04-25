@@ -518,6 +518,7 @@ model Attendance {
   classId     String
   sectionId   String
   date        DateTime
+  session     String           @default("FN")   // "FN" (Forenoon) or "AN" (Afternoon)
   status      AttendanceStatus
   markedBy    String?
   remarks     String?
@@ -525,7 +526,7 @@ model Attendance {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  @@unique([schoolId, studentId, date])                    // One record per student per day
+  @@unique([schoolId, studentId, date, session])  // One record per student per session per day
   @@index([schoolId, date])
   @@index([schoolId, classId, date])
   @@index([schoolId, classId, sectionId, date])

@@ -46,6 +46,7 @@ export default function AttendanceScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [selectedSession, setSelectedSession] = useState<"FN" | "AN">("FN");
   const toastAnimation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -72,7 +73,7 @@ export default function AttendanceScreen() {
 
   useEffect(() => {
     if (selectedEntry) fetchStudentsAndAttendance();
-  }, [selectedEntry, selectedDate]);
+  }, [selectedEntry, selectedDate, selectedSession]);
 
   const fetchStudentsAndAttendance = async () => {
     if (!selectedEntry) return;
@@ -84,7 +85,7 @@ export default function AttendanceScreen() {
       // Fetch attendance separately — if it fails, students still show as "Not Marked"
       let attendanceRecords: Awaited<ReturnType<typeof getAttendanceByClassDate>> = [];
       try {
-        attendanceRecords = await getAttendanceByClassDate(selectedEntry.classId, selectedEntry.sectionId, selectedDate);
+        attendanceRecords = await getAttendanceByClassDate(selectedEntry.classId, selectedEntry.sectionId, selectedDate, selectedSession);
       } catch (attErr) {
         console.warn("Error fetching attendance records (students will still display):", attErr);
       }
@@ -137,6 +138,7 @@ export default function AttendanceScreen() {
         classId: selectedEntry.classId,
         sectionId: selectedEntry.sectionId,
         date: selectedDate,
+        session: selectedSession,
         status: apiStatus as "Present" | "Absent",
       });
       showSuccessToast();
@@ -200,6 +202,7 @@ export default function AttendanceScreen() {
                 classId: selectedEntry.classId,
                 sectionId: selectedEntry.sectionId,
                 date: selectedDate,
+                session: selectedSession,
                 entries: studentsToMark.map((s) => ({
                   studentId: s.id,
                   status,
@@ -304,6 +307,24 @@ export default function AttendanceScreen() {
                 <MaterialCommunityIcons name="chevron-right" size={24} color={isToday ? "#CBD5E1" : "#4C6EF5"} />
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Session Toggle (FN / AN) */}
+          <View style={styles.sessionToggle}>
+            <TouchableOpacity
+              style={[styles.sessionBtn, selectedSession === "FN" && styles.sessionBtnActive]}
+              onPress={() => setSelectedSession("FN")}
+            >
+              <MaterialCommunityIcons name="weather-sunny" size={16} color={selectedSession === "FN" ? "#FFF" : "#64748B"} />
+              <Text style={[styles.sessionBtnText, selectedSession === "FN" && styles.sessionBtnTextActive]}>Forenoon</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.sessionBtn, selectedSession === "AN" && styles.sessionBtnActive]}
+              onPress={() => setSelectedSession("AN")}
+            >
+              <MaterialCommunityIcons name="weather-night" size={16} color={selectedSession === "AN" ? "#FFF" : "#64748B"} />
+              <Text style={[styles.sessionBtnText, selectedSession === "AN" && styles.sessionBtnTextActive]}>Afternoon</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Simple Summary Card */}
@@ -474,7 +495,41 @@ const styles = StyleSheet.create({
   mainScroll: { flex: 1 },
   scrollContent: { padding: 16 },
 
-  selectorRow: { flexDirection: "row", gap: 12, marginBottom: 16 },
+  selectorRow: { flexDirection: "row", gap: 12, marginBottom: 12 },
+
+  sessionToggle: {
+    flexDirection: "row",
+    backgroundColor: "#F1F5F9",
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+  },
+  sessionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 6,
+  },
+  sessionBtnActive: {
+    backgroundColor: "#4C6EF5",
+    shadowColor: "#4C6EF5",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  sessionBtnText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  sessionBtnTextActive: {
+    color: "#FFF",
+  },
+
   classSelector: {
     flexDirection: "row",
     alignItems: "center",
