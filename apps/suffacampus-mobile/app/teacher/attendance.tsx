@@ -78,10 +78,16 @@ export default function AttendanceScreen() {
     if (!selectedEntry) return;
     setLoading(true);
     try {
-      const [studentRecords, attendanceRecords] = await Promise.all([
-        getStudentsByClass(selectedEntry.classId, selectedEntry.sectionId),
-        getAttendanceByClassDate(selectedEntry.classId, selectedEntry.sectionId, selectedDate),
-      ]);
+      // Fetch students first — this must succeed for the screen to be useful
+      const studentRecords = await getStudentsByClass(selectedEntry.classId, selectedEntry.sectionId);
+
+      // Fetch attendance separately — if it fails, students still show as "Not Marked"
+      let attendanceRecords: Awaited<ReturnType<typeof getAttendanceByClassDate>> = [];
+      try {
+        attendanceRecords = await getAttendanceByClassDate(selectedEntry.classId, selectedEntry.sectionId, selectedDate);
+      } catch (attErr) {
+        console.warn("Error fetching attendance records (students will still display):", attErr);
+      }
 
       const attendanceMap: Record<string, "Present" | "Absent"> = {};
       attendanceRecords.forEach((r) => {
@@ -101,7 +107,7 @@ export default function AttendanceScreen() {
 
       setStudents(studentsList);
     } catch (err) {
-      console.warn("Error fetching attendance data:", err);
+      console.warn("Error fetching student data:", err);
       setStudents([]);
     } finally {
       setLoading(false);
@@ -157,7 +163,7 @@ export default function AttendanceScreen() {
             >
               <MaterialCommunityIcons name="google-classroom" size={22} color="#4C6EF5" />
               <Text style={{ fontSize: 16, fontWeight: "600", color: "#1E293B", marginLeft: 12 }}>
-                Class {entry.label}
+                {entry.label}
               </Text>
               {selectedEntry?.classId === entry.classId && selectedEntry?.sectionId === entry.sectionId && (
                 <MaterialCommunityIcons name="check-circle" size={20} color="#4C6EF5" style={{ marginLeft: "auto" }} />
@@ -281,7 +287,7 @@ export default function AttendanceScreen() {
           <View style={styles.selectorRow}>
             <TouchableOpacity style={styles.classSelector} onPress={openClassPicker}>
               <MaterialCommunityIcons name="google-classroom" size={20} color="#4C6EF5" />
-              <Text style={styles.classSelectorText}>Class {selectedEntry?.label || "—"}</Text>
+              <Text style={styles.classSelectorText}>{selectedEntry?.label || "Select Class"}</Text>
               <MaterialCommunityIcons name="chevron-down" size={20} color="#64748B" />
             </TouchableOpacity>
 

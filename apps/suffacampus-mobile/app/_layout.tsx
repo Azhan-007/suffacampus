@@ -1,6 +1,5 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import * as Notifications from "expo-notifications";
-import { Stack, router } from "expo-router";
+import { Stack } from "expo-router";
 import { useEffect, useRef } from "react";
 import { StyleSheet, Text, TouchableOpacity, View, AppState, AppStateStatus } from "react-native";
 import { useAuth } from "../hooks/useAuth";
@@ -38,37 +37,17 @@ export default function RootLayout() {
   const appState = useRef(AppState.currentState);
   const periodicTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-      }),
-    });
-
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const triggerActionUrl =
-        (response.notification.request.trigger as any)?.payload?.data?.actionUrl;
-      const actionUrl =
-        response.notification.request.content.data?.actionUrl ?? triggerActionUrl;
-
-      if (typeof actionUrl === "string" && actionUrl.startsWith("/")) {
-        router.push(actionUrl as any);
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, []);
+  // -----------------------------------------------------------------------
+  // NOTE: expo-notifications setup was removed from the root layout.
+  // Push notifications were removed from Expo Go in SDK 53+. The
+  // notification handler will be initialized in the notification screens
+  // themselves (admin/student/teacher notifications). For production
+  // builds (dev-client / standalone), notifications work from those screens.
+  // -----------------------------------------------------------------------
 
   useEffect(() => {
     if (!__DEV__) return; // Keep awake only in development
     
-    // Activate keep awake with error handling
     activateKeepAwakeAsync('root-layout').catch((error) => {
       console.warn('Keep awake not available:', error.message);
     });
@@ -79,16 +58,11 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    /**
-     * AppState listener: Flush offline queue when app comes to foreground.
-     * This ensures queued mutations are retried as soon as the user reopens the app.
-     */
     const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
       if (
         appState.current.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
-        // App has come to foreground
         console.log('[AppState] App foreground: flushing offline queue');
         try {
           await flushOfflineQueue();
@@ -105,17 +79,13 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    /**
-     * Periodic timer: Flush offline queue every 30 seconds.
-     * Helps ensure queued mutations are retried even if the app stays in background.
-     */
     const timer = setInterval(async () => {
       try {
         await flushOfflineQueue();
       } catch (error) {
         console.warn('[PeriodicFlush] Offline queue flush failed:', error);
       }
-    }, 30_000); // 30 seconds
+    }, 30_000);
 
     periodicTimerRef.current = timer as any;
 

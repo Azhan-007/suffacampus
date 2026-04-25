@@ -1,15 +1,28 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
-import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { apiFetch } from "./api";
+
+// ---------------------------------------------------------------------------
+// expo-notifications is loaded lazily (inside each function) because its
+// module-level side-effects throw in Expo Go on SDK 53+. This makes the
+// service safe to import from route files that expo-router eagerly loads
+// during startup, while still working in production/dev-client builds.
+// ---------------------------------------------------------------------------
+
+type NotificationsModule = typeof import("expo-notifications");
+
+function getNotifications(): NotificationsModule {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require("expo-notifications") as NotificationsModule;
+}
 
 const STORED_PUSH_TOKEN_KEY = "pushToken";
 
 export type PushPermissionState = {
   granted: boolean;
   canAskAgain: boolean;
-  status: Notifications.PermissionStatus;
+  status: string;
 };
 
 function getProjectId(): string | undefined {
@@ -25,6 +38,7 @@ function getPlatform(): "web" | "android" | "ios" {
 }
 
 export async function getPushPermissionState(): Promise<PushPermissionState> {
+  const Notifications = getNotifications();
   const permissions = await Notifications.getPermissionsAsync();
   return {
     granted: permissions.granted || permissions.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL,
@@ -34,6 +48,8 @@ export async function getPushPermissionState(): Promise<PushPermissionState> {
 }
 
 export async function requestPushPermissionAndRegister(): Promise<{ token: string }> {
+  const Notifications = getNotifications();
+
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
       name: "Default",

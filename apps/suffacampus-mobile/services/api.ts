@@ -363,8 +363,10 @@ export async function apiFetch<T = unknown>(
         error?: {
           message?: string;
           code?: string;
+          details?: unknown;
         };
       };
+      console.warn(`[DEBUG apiFetch] ${method} ${path} → ${response.status}`, JSON.stringify(errorBody).substring(0, 500));
       errorMessage =
         errorBody.error?.message ??
         errorBody.message ??

@@ -175,11 +175,17 @@ export async function getStudentsByClass(
   classId: string,
   sectionId: string
 ): Promise<StudentRecord[]> {
-  const data = await apiFetch<any[]>("/students", {
+  console.log(`[DEBUG] getStudentsByClass called: classId=${classId}, sectionId=${sectionId}`);
+  const data = await apiFetch<any>("/students", {
     params: { classId, sectionId, limit: "200" },
   });
-  // Backend returns paginated { firstName, lastName, rollNumber, ... }
-  return (Array.isArray(data) ? data : []).map((s: any) => ({
+  console.log(`[DEBUG] getStudentsByClass raw response:`, JSON.stringify(data)?.substring(0, 500));
+  console.log(`[DEBUG] getStudentsByClass isArray:`, Array.isArray(data), `type:`, typeof data);
+  
+  // Handle both array and paginated envelope responses
+  const records = Array.isArray(data) ? data : (data?.data ?? []);
+  
+  return records.map((s: any) => ({
     id: s.id,
     name: `${s.firstName || ""} ${s.lastName || ""}`.trim(),
     rollNo: s.rollNumber || "",
@@ -206,16 +212,25 @@ export async function getAttendanceByClassDate(
 export async function upsertAttendance(
   record: { studentId: string; classId: string; sectionId: string; date: string; status: "Present" | "Absent"; id?: string }
 ): Promise<ClassAttendanceRecord> {
-  if (record.id) {
-    return apiFetch<ClassAttendanceRecord>(`/attendance/${record.id}`, {
-      method: "PATCH",
-      body: record,
+  // Strip undefined/null fields to avoid strict schema rejection
+  const { id, ...payload } = record;
+  console.log(`[DEBUG] upsertAttendance: id=${id}, payload=`, JSON.stringify(payload));
+  
+  try {
+    if (id) {
+      return await apiFetch<ClassAttendanceRecord>(`/attendance/${id}`, {
+        method: "PATCH",
+        body: { status: payload.status },
+      });
+    }
+    return await apiFetch<ClassAttendanceRecord>("/attendance", {
+      method: "POST",
+      body: payload,
     });
+  } catch (err: any) {
+    console.error(`[DEBUG] upsertAttendance ERROR:`, err?.message, err);
+    throw err;
   }
-  return apiFetch<ClassAttendanceRecord>("/attendance", {
-    method: "POST",
-    body: record,
-  });
 }
 
 /** Submit attendance for all students in a class at once. */

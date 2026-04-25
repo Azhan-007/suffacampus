@@ -1,0 +1,349 @@
+# SuffaCampus Production-Readiness Audit & Remediation Plan
+
+## Executive Summary
+
+| Metric | Value |
+|--------|-------|
+| **Readiness Score** | **62 / 100** |
+| **Decision** | **CONDITIONAL GO** — after P0 fixes |
+| **P0 Blockers** | 3 |
+| **P1 High** | 6 |
+| **P2 Medium** | 8 |
+| **P3 Low** | 5 |
+| **Backend Typecheck** | ✅ PASS |
+| **Webpanel Typecheck** | ✅ PASS |
+| **CI Workflows** | ⚠️ Incomplete (deploy steps placeholder) |
+
+> [!CAUTION]
+> 3 P0 issues must be fixed before any production traffic. The most critical is unbounded student fetching in the webpanel and missing tenant header in the mobile API client.
+
+---
+
+## Top 10 Blockers
+
+| # | Severity | Area | Issue |
+|---|----------|------|-------|
+| 1 | **P0** | Webpanel | `StudentService.getStudents()` fetches ALL students unpaginated — crashes at scale |
+| 2 | **P0** | Mobile | `apiFetch` missing `X-School-Id` header — SuperAdmin tenant isolation broken |
+| 3 | **P0** | DevOps | Root `.gitignore` missing `.env` patterns — risk of secrets in git |
+| 4 | **P1** | Webpanel | `apiFetchPaginated` missing `X-School-Id` header — SuperAdmin paginated queries unscoped |
+| 5 | **P1** | Webpanel | `AttendanceService.getWeeklyAttendance()` fires 7 sequential HTTP calls — N+1 |
+| 6 | **P1** | Contract | Webpanel `studentSchema` requires `address` (required), backend accepts optional |
+| 7 | **P1** | Contract | Webpanel `bookSchema.isbn` optional vs backend `createBookSchema.isbn` required |
+| 8 | **P1** | Webpanel | `FeeService.markAsPaid()` sends `Date` object for `paidDate` — backend strict schema rejects |
+| 9 | **P1** | CI/CD | Backend CI workflow missing `npm run lint` step |
+| 10 | **P1** | Contract | Webpanel `timetableSchema.teacherId` optional vs backend `periodSchema.teacherId` required |
+
+---
+
+## Detailed Issue Register
+
+### P0 — Must Fix Before Launch
+
+---
+
+#### P0-1: Unbounded Student Fetch in Webpanel
+
+- **Severity**: P0
+- **Area**: Webpanel → `services/studentService.ts:53`
+- **Symptom**: `getStudents()` calls `apiFetch<Record<string, unknown>[]>('/students')` without pagination params. Backend returns paginated (20 default), but service expects full array and does client-side filtering.
+- **Impact**: At scale (200+ students), only first 20 returned. Client-side filters yield incomplete data. `searchStudents()` and `getStudentCount()` also broken — both call `getStudents()` internally.
+- **Root Cause**: Service was designed for Firestore (returns all docs). Not adapted for paginated backend.
+- **Fix**: Refactor `getStudents` to pass `limit=1000` or use `apiFetchPaginated`. For `searchStudents` use backend server-side search via `?search=` query param.
+- **Files**:
+  - [studentService.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/services/studentService.ts#L45-L58)
+
+---
+
+#### P0-2: Mobile API Missing X-School-Id Header
+
+- **Severity**: P0
+- **Area**: Mobile → `services/api.ts:267-345`
+- **Symptom**: Mobile `apiFetch` never sends `X-School-Id` header. When a SuperAdmin uses the mobile app, all tenant-scoped requests fail with "SuperAdmin must provide X-School-Id for tenant-scoped routes".
+- **Impact**: SuperAdmin completely locked out of mobile app's tenant features.
+- **Root Cause**: Mobile API client was built before SuperAdmin multi-tenant header was added.
+- **Fix**: Add school context header injection similar to webpanel's `api.ts:99-102`.
+- **Files**:
+  - [api.ts](file:///d:/suffacampus/apps/suffacampus-mobile/services/api.ts#L267-L295)
+
+---
+
+#### P0-3: Root .gitignore Missing .env Patterns
+
+- **Severity**: P0
+- **Area**: DevOps → `.gitignore`
+- **Symptom**: Root `.gitignore` does not contain `.env` entries. Backend `.gitignore` also missing explicit `.env` pattern. If a developer runs `git add .` from root, `.env` files with secrets could be committed.
+- **Impact**: Database credentials, Firebase private keys, JWT secrets exposed in version control.
+- **Root Cause**: Each app relies on its own `.gitignore` but patterns are incomplete.
+- **Fix**: Add `.env*` (except `.env.example`) patterns to root `.gitignore` and each app's `.gitignore`.
+- **Files**:
+  - [.gitignore](file:///d:/suffacampus/.gitignore)
+  - [backend/.gitignore](file:///d:/suffacampus/apps/backend/.gitignore)
+
+---
+
+### P1 — Fix Before Launch or Accept Risk
+
+---
+
+#### P1-1: apiFetchPaginated Missing X-School-Id Header
+
+- **Severity**: P1
+- **Area**: Webpanel → `lib/api.ts:258-353`
+- **Symptom**: `apiFetchPaginated` constructs headers but does NOT include `X-School-Id`. Only `apiFetch` does (line 99-102). All paginated endpoints (students, fees, etc.) from SuperAdmin view return wrong school data or error.
+- **Root Cause**: Copy-paste from `apiFetch` missed the school header block.
+- **Fix**: Add the same `X-School-Id` header logic to `apiFetchPaginated`.
+- **Files**:
+  - [api.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/lib/api.ts#L258-L272)
+
+---
+
+#### P1-2: Weekly Attendance N+1 HTTP Calls
+
+- **Severity**: P1
+- **Area**: Webpanel → `services/attendanceService.ts:143-163`
+- **Symptom**: `getWeeklyAttendance()` fires 7 parallel calls to `getAttendanceStats()`, each of which calls `getAttendance()` which calls the backend. That's 7 HTTP round-trips for one dashboard widget.
+- **Impact**: Slow dashboard load, rate-limit risk, poor UX.
+- **Fix**: Use backend's `GET /attendance/stats?fromDate=...&toDate=...` endpoint directly for the full week.
+- **Files**:
+  - [attendanceService.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/services/attendanceService.ts#L143-L163)
+
+---
+
+#### P1-3: Schema Drift — Student Address Required in Webpanel, Optional in Backend
+
+- **Severity**: P1
+- **Area**: Contract → `lib/schemas.ts:41` vs `schemas/student.schema.ts:23`
+- **Symptom**: Webpanel `studentSchema` has `address: requiredString('Address')`, but backend `createStudentSchema` has `address: z.string().optional()`. Users MUST enter address in webpanel but backend doesn't require it.
+- **Impact**: Webpanel rejects valid forms unnecessarily. More critically, it prevents field parity.
+- **Fix**: Align — make webpanel address optional or make backend require it (business decision needed).
+- **Files**:
+  - [schemas.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/lib/schemas.ts#L41)
+  - [student.schema.ts](file:///d:/suffacampus/apps/backend/src/schemas/student.schema.ts#L23)
+
+---
+
+#### P1-4: Schema Drift — Book ISBN Optional in Webpanel, Required in Backend
+
+- **Severity**: P1
+- **Area**: Contract → `lib/schemas.ts:139` vs `schemas/modules.schema.ts:94`
+- **Symptom**: Webpanel `bookSchema.isbn` is `optionalString` (defaults to `''`), but backend `createBookSchema.isbn` is `z.string().min(1, "ISBN is required")`. Form submits with empty ISBN → 400 from backend.
+- **Impact**: Library book creation fails silently from webpanel.
+- **Fix**: Make webpanel `isbn` required, or relax backend to allow optional.
+- **Files**:
+  - [schemas.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/lib/schemas.ts#L139)
+  - [modules.schema.ts](file:///d:/suffacampus/apps/backend/src/schemas/modules.schema.ts#L94)
+
+---
+
+#### P1-5: FeeService Sends Date Object Instead of ISO String
+
+- **Severity**: P1
+- **Area**: Webpanel → `services/feeService.ts:193`
+- **Symptom**: `markAsPaid()` sends `paidDate: status === 'Paid' ? new Date() : fee.paidDate`. Backend `updateFeeSchema.paidDate` expects `z.string().optional()`. Sending a Date object fails `.strict()` Zod parse.
+- **Impact**: Fee payment marking fails with validation error.
+- **Fix**: Convert to ISO string: `new Date().toISOString()`.
+- **Files**:
+  - [feeService.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/services/feeService.ts#L189-L194)
+
+---
+
+#### P1-6: Backend CI Missing ESLint Step
+
+- **Severity**: P1
+- **Area**: CI/CD → `.github/workflows/backend-ci.yml`
+- **Symptom**: Backend CI `lint` job runs only `npx tsc --noEmit`. The `npm run lint` (ESLint) is never executed. Lint errors can ship.
+- **Fix**: Add `npm run lint` step to the CI lint job.
+- **Files**:
+  - [backend-ci.yml](file:///d:/suffacampus/.github/workflows/backend-ci.yml#L20-L36)
+
+---
+
+### P2 — Should Fix
+
+---
+
+#### P2-1: Debug console.log in Production API Client
+
+- **Area**: Webpanel → `lib/api.ts:177-178`
+- **Symptom**: `console.log(\`[apiFetch] ${path} => status: ${res.status}...\`)` runs on every API call in production.
+- **Fix**: Remove or gate behind `process.env.NODE_ENV === 'development'`.
+
+#### P2-2: Attendance Route Missing Take Limit Cap
+
+- **Area**: Backend → `routes/v1/attendance.ts:84-88`
+- **Symptom**: Fallback query (no date filter) uses `take: 2000`. At scale, this returns enormous payloads.
+- **Fix**: Cap at 200 and add pagination.
+
+#### P2-3: Webpanel Middleware ACL Missing Teacher Role for Attendance
+
+- **Area**: Webpanel → `middleware.ts:39`
+- **Symptom**: `/attendance` ACL allows `SuperAdmin, Admin, Staff, Principal` but NOT `Teacher`. Teachers who navigate to `/attendance` get silently redirected to `/dashboard`.
+- **Fix**: Add `'Teacher'` to the attendance ACL roles array.
+
+#### P2-4: Mobile Session Token Missing Expiry Check
+
+- **Area**: Mobile → `services/api.ts:153-175`
+- **Symptom**: `getCachedSessionAccessToken()` returns stored token without checking JWT expiry. If token expired, it sends expired token → 401 → one wasted round trip before refresh.
+- **Fix**: Add expiry check like webpanel's `session-token.ts:25-29`.
+
+#### P2-5: Webpanel Event Schema Description Optional vs Backend Required
+
+- **Area**: Contract → `lib/schemas.ts:92` vs `modules.schema.ts:45`
+- **Symptom**: Webpanel `eventSchema.description` is `optionalString` (defaults to `''`), backend requires `min(1)`.
+- **Fix**: Make webpanel description required, or relax backend.
+
+#### P2-6: Timetable Schema teacherId Optional vs Backend Required
+
+- **Area**: Contract → `lib/schemas.ts:155` vs `modules.schema.ts:157`
+- **Symptom**: Webpanel `periodSchema.teacherId` is `optionalString`, backend requires `min(1, "Teacher ID is required")`.
+- **Fix**: Make webpanel teacherId required.
+
+#### P2-7: Result Schema Fields Looser Than Backend
+
+- **Area**: Contract → `lib/schemas.ts:108-129` vs `modules.schema.ts:124-143`
+- **Symptom**: Webpanel `resultSchema` has `studentId: optionalString`, `rollNumber: optionalString`, `examName: optionalString`, `sectionId: optionalString`. Backend requires all of these with `min(1)`.
+- **Fix**: Align required fields.
+
+#### P2-8: Fee Schema classId/sectionId/studentId Optional vs Backend Required
+
+- **Area**: Contract → `lib/schemas.ts:71-73` vs `modules.schema.ts:66-69`
+- **Symptom**: Webpanel fee schema has these as `optionalString`, backend requires `min(1)`.
+- **Fix**: Make webpanel fields required.
+
+---
+
+### P3 — Nice to Have
+
+| # | Area | Issue |
+|---|------|-------|
+| P3-1 | Webpanel | `publishedYear` type mismatch: webpanel sends string, backend expects number |
+| P3-2 | Mobile | ESLint CI step has `|| true` — lint failures silently ignored |
+| P3-3 | CI/CD | All deploy steps are placeholder comments — no actual deployment configured |
+| P3-4 | Backend | `backfill-users.ts` and `seed-school.ts` in root — should be in `scripts/` |
+| P3-5 | Backend | Multiple `server*.log` files committed or present in working dir |
+
+---
+
+## Proposed Changes
+
+### Component 1: Webpanel API Client Fixes
+
+#### [MODIFY] [api.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/lib/api.ts)
+1. Add `X-School-Id` header to `apiFetchPaginated` (P1-1)
+2. Remove debug `console.log` (P2-1)
+
+---
+
+#### [MODIFY] [studentService.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/services/studentService.ts)
+1. Pass `?limit=1000` to backend to avoid pagination truncation (P0-1)
+2. Use backend `?search=` param for `searchStudents` instead of fetching all
+
+---
+
+#### [MODIFY] [feeService.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/services/feeService.ts)
+1. Convert `paidDate` from `Date` to ISO string (P1-5)
+
+---
+
+#### [MODIFY] [middleware.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/middleware.ts)
+1. Add `'Teacher'` to `/attendance` ACL (P2-3)
+
+---
+
+### Component 2: Webpanel Schema Alignment
+
+#### [MODIFY] [schemas.ts](file:///d:/suffacampus/apps/suffacampus-webpanel/lib/schemas.ts)
+1. Make `isbn` required in `bookSchema` (P1-4)
+2. Make `description` required in `eventSchema` (P2-5)
+3. Make `teacherId` required in timetable `periodSchema` (P2-6)
+4. Make `studentId`, `rollNumber`, `examName`, `sectionId` required in `resultSchema` (P2-7)
+5. Make `classId`, `sectionId`, `studentId` required in `feeSchema` (P2-8)
+6. Make `address` optional in `studentSchema` (P1-3) — aligning with backend
+
+---
+
+### Component 3: Mobile API Client Fix
+
+#### [MODIFY] [api.ts](file:///d:/suffacampus/apps/suffacampus-mobile/services/api.ts)
+1. Add `X-School-Id` header for SuperAdmin (P0-2)
+2. Add JWT expiry check before using cached token (P2-4)
+
+---
+
+### Component 4: DevOps Fixes
+
+#### [MODIFY] [.gitignore](file:///d:/suffacampus/.gitignore)
+1. Add `.env`, `.env.local`, `.env.*.local` patterns (P0-3)
+
+#### [MODIFY] [backend-ci.yml](file:///d:/suffacampus/.github/workflows/backend-ci.yml)
+1. Add `npm run lint` step (P1-6)
+
+---
+
+### Component 5: Backend Safety Improvements
+
+#### [MODIFY] [attendance.ts](file:///d:/suffacampus/apps/backend/src/routes/v1/attendance.ts)
+1. Cap fallback query `take` from 2000 to 500 (P2-2)
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- `cd apps/backend && npx tsc --noEmit` — must pass
+- `cd apps/suffacampus-webpanel && npx tsc --noEmit` — must pass
+- `cd apps/backend && npm run lint` — must pass after CI fix
+- `cd apps/suffacampus-webpanel && npx next lint` — must pass
+
+### Manual Verification
+- Verify `apiFetchPaginated` now includes `X-School-Id` by code inspection
+- Verify mobile `apiFetch` sends `X-School-Id` header by code inspection
+- Verify schema alignment by tracing each webpanel form field → API call → backend schema
+
+---
+
+## Residual Risk List
+
+| Risk | Why Not Fixed Now | Mitigation |
+|------|-------------------|------------|
+| All CI deploy steps are placeholders | Requires Vercel/Render/EAS credentials | Document in hardening plan |
+| Redis not required in production | Queue/retry runs in degraded mode | Monitor queue depth |
+| No E2E tests | Requires test infrastructure setup | Day 3-4 hardening plan |
+| `AttendanceService.getWeeklyAttendance` N+1 | Needs new backend endpoint or refactor | Acceptable for MVP; fix in Day 2 |
+| Rate limit `100 req/min` may be too low | Needs load testing to calibrate | Monitor 429s in production |
+| No CSP reporting endpoint | Security headers are set but violations not tracked | Add `report-uri` post-launch |
+
+---
+
+## 7-Day Hardening Plan
+
+| Day | Focus | Actions |
+|-----|-------|---------|
+| **Day 1** | **P0 Fixes** | Fix all 3 P0 issues. Run typecheck. Deploy backend + webpanel. |
+| **Day 2** | **P1 Fixes** | Fix P1-1 through P1-6. Schema alignment. Re-run all lints + typechecks. |
+| **Day 3** | **P2 Fixes + E2E** | Fix P2 issues. Set up basic Playwright E2E for login → dashboard → CRUD flows. |
+| **Day 4** | **Load Testing** | Run k6 smoke/stress tests. Tune rate limits. Add indexes if slow queries found. |
+| **Day 5** | **Security Hardening** | Enable SENTRY_DSN. Configure CSP reporting. Audit all permission checks. Pen-test auth flows. |
+| **Day 6** | **Deployment Pipeline** | Configure Vercel deploy for webpanel. Configure Render deploy. Set up staging environment. |
+| **Day 7** | **Final Validation** | Full regression pass. Go/No-Go meeting. Document runbook. Enable monitoring alerts. |
+
+---
+
+## Final Launch Checklist
+
+- [ ] All P0 issues resolved and verified
+- [ ] All P1 issues resolved or risk-accepted with documentation
+- [ ] Backend `tsc --noEmit` passes
+- [ ] Webpanel `tsc --noEmit` passes  
+- [ ] Backend `npm run lint` passes
+- [ ] Webpanel `next lint` passes
+- [ ] `.env` files not in git history
+- [ ] `JWT_ACCESS_SECRET` is a strong random value in production
+- [ ] `AUTH_ALLOW_FIREBASE_FALLBACK=false` in production
+- [ ] `SENTRY_DSN` configured for error tracking
+- [ ] `CORS_ORIGINS` restricted to production domains only
+- [ ] Rate limit tuned based on load test results
+- [ ] Backup/restore procedure documented and tested
+- [ ] Rollback procedure documented (Render rollback, Netlify rollback)
+- [ ] On-call rotation established

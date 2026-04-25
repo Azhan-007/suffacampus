@@ -51,7 +51,7 @@ export async function getClassSectionEntries(): Promise<ClassSectionEntry[]> {
     for (const section of cls.sections) {
       entries.push({
         classId: cls.id,
-        sectionId: section.id,
+        sectionId: section.sectionName,  // Use sectionName (e.g. "A") — matches how webpanel stores student.sectionId
         label: `${cls.className}${section.sectionName}`,
         className: cls.className,
         sectionName: section.sectionName,
