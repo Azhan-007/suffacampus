@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery, useCrudList, useCrudModal } from '@/hooks';
@@ -125,10 +125,10 @@ export default function TeachersPage() {
     filterDeps: [filterDepartment, filterSubject, filterStatus],
     compareFn: (a, b, field) => {
       switch (field) {
-        case 'name': return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
-        case 'department': return a.department.localeCompare(b.department);
+        case 'name': return `${a.firstName || ''} ${a.lastName || ''}`.localeCompare(`${b.firstName || ''} ${b.lastName || ''}`);
+        case 'department': return (a.department || '').localeCompare(b.department || '');
         case 'joiningDate': return new Date(a.joiningDate).getTime() - new Date(b.joiningDate).getTime();
-        case 'teacherId': return a.teacherId.localeCompare(b.teacherId);
+        case 'teacherId': return (a.teacherId || '').localeCompare(b.teacherId || '');
         default: return 0;
       }
     },

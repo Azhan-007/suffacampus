@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -155,7 +155,7 @@ export default function AttendancePage() {
 
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
-      list = list.filter((a) => a.studentName.toLowerCase().includes(q));
+      list = list.filter((a) => (a.studentName || '').toLowerCase().includes(q));
     }
     if (filterClass) list = list.filter((a) => a.classId === filterClass);
     if (filterSection) list = list.filter((a) => a.sectionId === filterSection);
@@ -169,9 +169,9 @@ export default function AttendancePage() {
     sorted.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
-        case 'studentName': cmp = a.studentName.localeCompare(b.studentName); break;
-        case 'classId': cmp = a.classId.localeCompare(b.classId); break;
-        case 'status': cmp = a.status.localeCompare(b.status); break;
+        case 'studentName': cmp = (a.studentName || '').localeCompare(b.studentName || ''); break;
+        case 'classId': cmp = (a.classId || '').localeCompare(b.classId || ''); break;
+        case 'status': cmp = (a.status || '').localeCompare(b.status || ''); break;
         case 'date': cmp = new Date(a.date).getTime() - new Date(b.date).getTime(); break;
       }
       return sortDir === 'asc' ? cmp : -cmp;

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -88,11 +88,11 @@ export default function ResultsPage() {
     sorted.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
-        case 'studentName': cmp = a.studentName.localeCompare(b.studentName); break;
-        case 'subject': cmp = a.subject.localeCompare(b.subject); break;
+        case 'studentName': cmp = (a.studentName || '').localeCompare(b.studentName || ''); break;
+        case 'subject': cmp = (a.subject || '').localeCompare(b.subject || ''); break;
         case 'percentage': cmp = (a.percentage || 0) - (b.percentage || 0); break;
         case 'grade': cmp = (a.grade || '').localeCompare(b.grade || ''); break;
-        case 'status': cmp = a.status.localeCompare(b.status); break;
+        case 'status': cmp = (a.status || '').localeCompare(b.status || ''); break;
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });

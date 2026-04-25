@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -184,9 +184,9 @@ export default function StudentsPage() {
     filterDeps: [filterClass, filterSection, filterGender, filterStatus],
     compareFn: (a, b, field) => {
       switch (field) {
-        case 'name': return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
-        case 'classId': return a.classId.localeCompare(b.classId) || a.rollNumber.localeCompare(b.rollNumber);
-        case 'rollNumber': return a.rollNumber.localeCompare(b.rollNumber);
+        case 'name': return `${a.firstName || ''} ${a.lastName || ''}`.localeCompare(`${b.firstName || ''} ${b.lastName || ''}`);
+        case 'classId': return (a.classId || '').localeCompare(b.classId || '') || (a.rollNumber || '').localeCompare(b.rollNumber || '');
+        case 'rollNumber': return (a.rollNumber || '').localeCompare(b.rollNumber || '');
         case 'enrollmentDate': return new Date(a.enrollmentDate).getTime() - new Date(b.enrollmentDate).getTime();
         default: return 0;
       }

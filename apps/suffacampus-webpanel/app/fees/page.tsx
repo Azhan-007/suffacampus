@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -108,11 +108,11 @@ export default function FeesPage() {
     sorted.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
-        case 'studentName': cmp = a.studentName.localeCompare(b.studentName); break;
+        case 'studentName': cmp = (a.studentName || '').localeCompare(b.studentName || ''); break;
         case 'amount': cmp = a.amount - b.amount; break;
         case 'dueDate': cmp = new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime(); break;
-        case 'status': cmp = a.status.localeCompare(b.status); break;
-        case 'feeType': cmp = a.feeType.localeCompare(b.feeType); break;
+        case 'status': cmp = (a.status || '').localeCompare(b.status || ''); break;
+        case 'feeType': cmp = (a.feeType || '').localeCompare(b.feeType || ''); break;
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });

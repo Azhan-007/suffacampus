@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -80,11 +80,11 @@ export default function LibraryPage() {
     sorted.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
-        case 'title': cmp = a.title.localeCompare(b.title); break;
-        case 'author': cmp = a.author.localeCompare(b.author); break;
-        case 'category': cmp = a.category.localeCompare(b.category); break;
+        case 'title': cmp = (a.title || '').localeCompare(b.title || ''); break;
+        case 'author': cmp = (a.author || '').localeCompare(b.author || ''); break;
+        case 'category': cmp = (a.category || '').localeCompare(b.category || ''); break;
         case 'availableCopies': cmp = a.availableCopies - b.availableCopies; break;
-        case 'status': cmp = a.status.localeCompare(b.status); break;
+        case 'status': cmp = (a.status || '').localeCompare(b.status || ''); break;
       }
       return sortDir === 'asc' ? cmp : -cmp;
     });

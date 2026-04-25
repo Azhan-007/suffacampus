@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useDocumentTitle, useApiQuery } from '@/hooks';
@@ -98,7 +98,7 @@ export default function ClassesPage() {
     sorted.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
-        case 'className': cmp = a.className.localeCompare(b.className); break;
+        case 'className': cmp = (a.className || '').localeCompare(b.className || ''); break;
         case 'grade': cmp = a.grade - b.grade; break;
         case 'sections': cmp = a.sections.length - b.sections.length; break;
         case 'capacity': cmp = a.capacity - b.capacity; break;
