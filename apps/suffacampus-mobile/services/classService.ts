@@ -48,14 +48,26 @@ export async function getClassSectionEntries(): Promise<ClassSectionEntry[]> {
   const entries: ClassSectionEntry[] = [];
   for (const cls of classes) {
     if (!cls.isActive) continue;
-    for (const section of cls.sections) {
+    const sections = Array.isArray(cls.sections) ? cls.sections : [];
+    if (sections.length === 0) {
+      // Class has no sections — create a default entry so it still appears
       entries.push({
         classId: cls.id,
-        sectionId: section.sectionName,  // Use sectionName (e.g. "A") — matches how webpanel stores student.sectionId
-        label: `${cls.className}${section.sectionName}`,
+        sectionId: "default",
+        label: cls.className,
         className: cls.className,
-        sectionName: section.sectionName,
+        sectionName: "",
       });
+    } else {
+      for (const section of sections) {
+        entries.push({
+          classId: cls.id,
+          sectionId: section.sectionName,
+          label: `${cls.className}${section.sectionName}`,
+          className: cls.className,
+          sectionName: section.sectionName,
+        });
+      }
     }
   }
   return entries.sort((a, b) => {

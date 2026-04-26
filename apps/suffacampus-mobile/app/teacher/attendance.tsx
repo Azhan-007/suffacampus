@@ -55,18 +55,7 @@ export default function AttendanceScreen() {
         // Fetch classes and profile independently so one failure doesn't block both
         let allEntries: ClassSectionEntry[] = [];
         try {
-          // DEBUG: Fetch raw classes first to see what backend returns
-          const { getAllClasses } = await import("../../services/classService");
-          const rawClasses = await getAllClasses();
-          Alert.alert(
-            "DEBUG: Raw Classes",
-            `Count: ${rawClasses?.length ?? 'null'}\n` +
-            `Type: ${typeof rawClasses}\n` +
-            `IsArray: ${Array.isArray(rawClasses)}\n` +
-            `First: ${JSON.stringify(rawClasses?.[0] ?? 'none').substring(0, 200)}`
-          );
           allEntries = await getClassSectionEntries();
-          Alert.alert("DEBUG: Entries", `Entries count: ${allEntries.length}`);
         } catch (classErr: any) {
           console.warn("Failed to load classes:", classErr);
           Alert.alert("Error", "Could not load classes: " + (classErr?.message || "Unknown error"));
