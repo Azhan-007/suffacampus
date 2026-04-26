@@ -52,11 +52,24 @@ export default function AttendanceScreen() {
   useEffect(() => {
     (async () => {
       try {
-        const [allEntries, profile] = await Promise.all([
-          getClassSectionEntries(),
-          getMyProfile(),
-        ]);
-        const assigned = profile.assignedClasses ?? [];
+        // Fetch classes and profile independently so one failure doesn't block both
+        let allEntries: ClassSectionEntry[] = [];
+        try {
+          allEntries = await getClassSectionEntries();
+        } catch (classErr: any) {
+          console.warn("Failed to load classes:", classErr);
+          Alert.alert("Error", "Could not load classes: " + (classErr?.message || "Unknown error"));
+          return;
+        }
+
+        let assigned: { classId: string; sectionId: string }[] = [];
+        try {
+          const profile = await getMyProfile();
+          assigned = profile.assignedClasses ?? [];
+        } catch (profileErr) {
+          console.warn("Failed to load profile (showing all classes):", profileErr);
+        }
+
         // If teacher has assigned classes, filter; otherwise show all
         const entries = assigned.length > 0
           ? allEntries.filter((e) =>
@@ -65,7 +78,8 @@ export default function AttendanceScreen() {
           : allEntries;
         setClassEntries(entries);
         if (entries.length > 0 && !selectedEntry) setSelectedEntry(entries[0]);
-      } catch {
+      } catch (err: any) {
+        console.warn("Unexpected error loading attendance data:", err);
         setClassEntries([]);
       }
     })();

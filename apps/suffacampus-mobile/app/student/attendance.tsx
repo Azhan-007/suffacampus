@@ -10,13 +10,13 @@ import { getStudentAttendanceHistory } from "../../services/attendanceService";
 
 interface AttendanceRecord {
   date: string;
-  status: "Present" | "Absent" | "Leave";
+  status: "Present" | "Absent" | "Late" | "Excused";
   session?: "FN" | "AN";
 }
 
 interface AttendanceStats {
-  todayFN: "Present" | "Absent" | "Leave" | "Not Marked";
-  todayAN: "Present" | "Absent" | "Leave" | "Not Marked";
+  todayFN: "Present" | "Absent" | "Late" | "Excused" | "Not Marked";
+  todayAN: "Present" | "Absent" | "Late" | "Excused" | "Not Marked";
   monthlyPercentage: number;
   totalPercentage: number;
   totalPresent: number;
@@ -77,7 +77,7 @@ export default function AttendanceScreen() {
         const d = new Date(r.date);
         return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       });
-      const monthlyPresent = monthlyRecords.filter((r: any) => r.status === "Present").length;
+      const monthlyPresent = monthlyRecords.filter((r: any) => r.status === "Present" || r.status === "Late").length;
       const monthlyTotal = monthlyRecords.length;
       const monthlyPercentage = monthlyTotal > 0 ? Math.round((monthlyPresent / monthlyTotal) * 100) : 0;
 
@@ -99,14 +99,16 @@ export default function AttendanceScreen() {
   const getStatusColor = (status: string) => {
     if (status === "Present") return "#10B981";
     if (status === "Absent") return "#EF4444";
-    if (status === "Leave") return "#F59E0B";
+    if (status === "Late") return "#F59E0B";
+    if (status === "Excused") return "#3B82F6";
     return "#6B7280";
   };
 
   const getStatusIcon = (status: string) => {
     if (status === "Present") return "check-circle";
     if (status === "Absent") return "cancel";
-    if (status === "Leave") return "event-busy";
+    if (status === "Late") return "schedule";
+    if (status === "Excused") return "info";
     return "schedule";
   };
 
