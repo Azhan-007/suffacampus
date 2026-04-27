@@ -225,8 +225,8 @@ async function bootstrapSessionAccessToken(
         },
         body: JSON.stringify({}),
       },
-      MAX_RETRIES,
-      DEFAULT_TIMEOUT_MS
+      2,      // More retries — Render cold starts can fail the first attempt
+      45_000  // 45s timeout — Render free tier can take 30-60s to wake up
     );
 
     if (!response.ok) {
