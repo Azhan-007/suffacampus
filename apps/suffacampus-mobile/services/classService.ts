@@ -53,7 +53,7 @@ export async function getClassSectionEntries(): Promise<ClassSectionEntry[]> {
       // Class has no sections — create a default entry so it still appears
       entries.push({
         classId: cls.id,
-        sectionId: "default",
+        sectionId: "",
         label: cls.className,
         className: cls.className,
         sectionName: "",

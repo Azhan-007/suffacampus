@@ -183,9 +183,9 @@ export async function getStudentsByClass(
   classId: string,
   sectionId: string
 ): Promise<StudentRecord[]> {
-  const data = await apiFetch<any>("/students", {
-    params: { classId, sectionId, limit: "200" },
-  });
+  const params: Record<string, string> = { classId, limit: "200" };
+  if (sectionId) params.sectionId = sectionId;
+  const data = await apiFetch<any>("/students", { params });
 
   // Handle both array and paginated envelope responses
   const records = Array.isArray(data) ? data : (data?.data ?? []);
@@ -209,7 +209,8 @@ export async function getAttendanceByClassDate(
   date: string,
   session?: "FN" | "AN"
 ): Promise<ClassAttendanceRecord[]> {
-  const params: Record<string, string> = { date, classId, sectionId };
+  const params: Record<string, string> = { date, classId };
+  if (sectionId) params.sectionId = sectionId;
   if (session) params.session = session;
   return apiFetch<ClassAttendanceRecord[]>("/attendance", { params });
 }
