@@ -62,7 +62,7 @@ export async function getClassSectionEntries(): Promise<ClassSectionEntry[]> {
       for (const section of sections) {
         entries.push({
           classId: cls.id,
-          sectionId: section.sectionName,
+          sectionId: section.id,
           label: `${cls.className}${section.sectionName}`,
           className: cls.className,
           sectionName: section.sectionName,

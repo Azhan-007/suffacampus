@@ -52,70 +52,34 @@ export default function AttendanceScreen() {
   useEffect(() => {
     (async () => {
       try {
-        // STEP 1: Fetch raw classes from API
-        const { getAllClasses } = await import("../../services/classService");
-        let rawClasses: any[] = [];
-        try {
-          rawClasses = await getAllClasses();
-        } catch (rawErr: any) {
-          Alert.alert("STEP 1 FAILED", "getAllClasses error: " + (rawErr?.message || String(rawErr)));
-          return;
-        }
-        Alert.alert(
-          "STEP 1: Raw Classes",
-          `Count: ${rawClasses?.length}\n` +
-          `Has sections: ${rawClasses?.[0]?.sections ? 'YES (' + rawClasses[0].sections.length + ')' : 'NO'}\n` +
-          `First: ${JSON.stringify(rawClasses?.[0]).substring(0, 300)}`
-        );
-
-        // STEP 2: Build class-section entries
+        // Fetch classes and profile independently so one failure doesn't block both
         let allEntries: ClassSectionEntry[] = [];
         try {
           allEntries = await getClassSectionEntries();
         } catch (classErr: any) {
-          Alert.alert("STEP 2 FAILED", "getClassSectionEntries error: " + (classErr?.message || String(classErr)));
+          console.warn("Failed to load classes:", classErr);
+          Alert.alert("Error", "Could not load classes: " + (classErr?.message || "Unknown error"));
           return;
         }
-        Alert.alert(
-          "STEP 2: Entries",
-          `Count: ${allEntries.length}\n` +
-          `Entries: ${JSON.stringify(allEntries).substring(0, 300)}`
-        );
 
-        // STEP 3: Fetch teacher profile
         let assigned: { classId: string; sectionId: string }[] = [];
-        let profileData: any = null;
         try {
-          profileData = await getMyProfile();
-          assigned = profileData.assignedClasses ?? [];
-        } catch (profileErr: any) {
-          Alert.alert("STEP 3 INFO", "Profile failed (will show all classes): " + (profileErr?.message || String(profileErr)));
+          const profile = await getMyProfile();
+          assigned = profile.assignedClasses ?? [];
+        } catch (profileErr) {
+          console.warn("Failed to load profile (showing all classes):", profileErr);
         }
-        Alert.alert(
-          "STEP 3: Profile",
-          `assignedClasses count: ${assigned.length}\n` +
-          `assigned: ${JSON.stringify(assigned).substring(0, 200)}\n` +
-          `role: ${profileData?.role || 'unknown'}`
-        );
 
-        // STEP 4: Filter entries
+        // If teacher has assigned classes, filter; otherwise show all
         const entries = assigned.length > 0
           ? allEntries.filter((e) =>
               assigned.some((a) => a.classId === e.classId && a.sectionId === e.sectionId)
             )
           : allEntries;
-        
-        Alert.alert(
-          "STEP 4: Final Result",
-          `Before filter: ${allEntries.length}\n` +
-          `After filter: ${entries.length}\n` +
-          `Will show: ${entries.map(e => e.label).join(', ') || 'NONE'}`
-        );
-
         setClassEntries(entries);
         if (entries.length > 0 && !selectedEntry) setSelectedEntry(entries[0]);
       } catch (err: any) {
-        Alert.alert("UNEXPECTED ERROR", err?.message || String(err));
+        console.warn("Unexpected error loading attendance data:", err);
         setClassEntries([]);
       }
     })();
