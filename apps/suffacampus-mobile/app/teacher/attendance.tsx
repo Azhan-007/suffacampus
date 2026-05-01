@@ -94,12 +94,12 @@ export default function AttendanceScreen() {
     setLoading(true);
     try {
       // Fetch students first — this must succeed for the screen to be useful
-      const studentRecords = await getStudentsByClass(selectedEntry.classId, selectedEntry.sectionId);
+      const studentRecords = await getStudentsByClass(selectedEntry.classId, selectedEntry.sectionName);
 
       // Fetch attendance separately — if it fails, students still show as "Not Marked"
       let attendanceRecords: Awaited<ReturnType<typeof getAttendanceByClassDate>> = [];
       try {
-        attendanceRecords = await getAttendanceByClassDate(selectedEntry.classId, selectedEntry.sectionId, selectedDate, selectedSession);
+        attendanceRecords = await getAttendanceByClassDate(selectedEntry.classId, selectedEntry.sectionName, selectedDate, selectedSession);
       } catch (attErr) {
         console.warn("Error fetching attendance records (students will still display):", attErr);
       }
@@ -149,7 +149,7 @@ export default function AttendanceScreen() {
       await upsertAttendance({
         studentId: student.id,
         classId: selectedEntry.classId,
-        sectionId: selectedEntry.sectionId,
+        sectionId: selectedEntry.sectionName,
         date: selectedDate,
         session: selectedSession,
         status: status as "Present" | "Absent" | "Late" | "Excused",
