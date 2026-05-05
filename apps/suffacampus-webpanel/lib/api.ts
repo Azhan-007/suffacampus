@@ -8,9 +8,9 @@ import { clearSessionAccessToken, getSessionAccessToken } from '@/lib/session-to
 const BASE_URL = PUBLIC_API_URL;
 
 // --- Retry configuration ------------------------------------------------------
-const MAX_RETRIES = 3;
-const RETRY_BASE_MS = 500;     // exponential backoff: 500 -> 1000 -> 2000
-const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 2;
+const RETRY_BASE_MS = 500;     // exponential backoff: 500 -> 1000
+const REQUEST_TIMEOUT_MS = 45_000;
 
 /** Status codes that should trigger a retry. */
 const RETRYABLE_STATUS = new Set([408, 502, 503, 504]);
