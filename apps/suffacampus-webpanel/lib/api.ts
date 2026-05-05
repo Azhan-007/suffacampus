@@ -10,7 +10,10 @@ const BASE_URL = PUBLIC_API_URL;
 // --- Retry configuration ------------------------------------------------------
 const MAX_RETRIES = 2;
 const RETRY_BASE_MS = 500;     // exponential backoff: 500 -> 1000
-const REQUEST_TIMEOUT_MS = 45_000;
+const REQUEST_TIMEOUT_MS = 60_000;
+
+/** Non-idempotent methods must NEVER be retried (risk of duplicates). */
+const NON_RETRYABLE_METHODS = new Set(['POST', 'PATCH', 'DELETE']);
 
 /** Status codes that should trigger a retry. */
 const RETRYABLE_STATUS = new Set([408, 502, 503, 504]);
@@ -111,8 +114,10 @@ export async function apiFetch<T = unknown>(
   };
 
   let lastError: Error | undefined;
+  const method = (fetchOptions.method ?? 'GET').toUpperCase();
+  const maxRetries = NON_RETRYABLE_METHODS.has(method) ? 0 : MAX_RETRIES;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // Back off before retries (skip on first attempt)
     if (attempt > 0) {
       await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
@@ -161,7 +166,7 @@ export async function apiFetch<T = unknown>(
         const apiError = new ApiError(res.status, message, code, details);
 
         // Retry on transient server errors (not 4xx client errors)
-        if (RETRYABLE_STATUS.has(res.status) && attempt < MAX_RETRIES) {
+        if (RETRYABLE_STATUS.has(res.status) && attempt < maxRetries) {
           lastError = apiError;
           continue;
         }
