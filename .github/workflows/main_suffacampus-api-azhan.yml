@@ -23,17 +23,29 @@ jobs:
         with:
           node-version: '22.x'
 
-      - name: npm install and build
+      - name: Install dependencies
         working-directory: apps/backend
+        run: npm ci --include=dev
+
+      - name: Build TypeScript
+        working-directory: apps/backend
+        run: npm run build
+
+      - name: Prepare deployment package
         run: |
-          npm install
-          npm run build --if-present
+          mkdir -p deploy
+          cp -r apps/backend/dist deploy/
+          cp -r apps/backend/node_modules deploy/
+          cp apps/backend/package.json deploy/
+          cp apps/backend/package-lock.json deploy/
+          cp -r apps/backend/prisma deploy/
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: apps/backend
+          path: deploy
+          include-hidden-files: false
 
   deploy:
     runs-on: ubuntu-latest
