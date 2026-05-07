@@ -82,8 +82,8 @@ export async function getStudentFees(studentId: string): Promise<FeesData> {
     });
 
     const safeFees = Array.isArray(fees) ? fees : [];
-    const total = safeFees.reduce((sum, fee) => sum + (fee.amount ?? 0), 0);
-    const paid = safeFees.reduce((sum, fee) => sum + (fee.amountPaid ?? 0), 0);
+    const total = safeFees.reduce((sum, fee) => sum + Number(fee.amount ?? 0), 0);
+    const paid = safeFees.reduce((sum, fee) => sum + Number(fee.amountPaid ?? 0), 0);
 
     const dueDate = safeFees
       .filter((fee) => (fee.status ?? "").toLowerCase() !== "paid" && typeof fee.dueDate === "string")
@@ -92,7 +92,7 @@ export async function getStudentFees(studentId: string): Promise<FeesData> {
 
     const history: PaymentHistoryItem[] = safeFees.map((fee) => ({
       date: fee.createdAt ?? fee.dueDate ?? "",
-      amount: fee.amountPaid ?? fee.amount ?? 0,
+      amount: Number(fee.amountPaid ?? fee.amount ?? 0),
       receiptId: fee.id,
       status:
         (fee.status ?? "").toLowerCase() === "paid"
@@ -107,7 +107,7 @@ export async function getStudentFees(studentId: string): Promise<FeesData> {
     const feeStructure: FeeStructureItem[] = safeFees.map((fee) => ({
       id: fee.id,
       name: fee.feeType ?? "Fee",
-      amount: fee.amount ?? 0,
+      amount: Number(fee.amount ?? 0),
       dueDate: fee.dueDate ?? "",
       status:
         (fee.status ?? "").toLowerCase() === "paid"
