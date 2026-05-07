@@ -97,19 +97,21 @@ export default function AttendanceScreen() {
   };
 
   const getStatusColor = (status: string) => {
-    if (status === "Present") return "#10B981";
-    if (status === "Absent") return "#EF4444";
-    if (status === "Late") return "#F59E0B";
-    if (status === "Excused") return "#3B82F6";
+    const s = (status || "").trim();
+    if (s === "Present") return "#10B981";
+    if (s === "Absent") return "#EF4444";
+    if (s === "Late") return "#F59E0B";
+    if (s === "Excused") return "#3B82F6";
     return "#6B7280";
   };
 
   const getStatusIcon = (status: string) => {
-    if (status === "Present") return "check-circle";
-    if (status === "Absent") return "cancel";
-    if (status === "Late") return "schedule";
-    if (status === "Excused") return "info";
-    return "schedule";
+    const s = (status || "").trim();
+    if (s === "Present") return "check-circle";
+    if (s === "Absent") return "cancel";
+    if (s === "Late") return "access-time";
+    if (s === "Excused") return "info";
+    return "help-outline";
   };
 
   const renderSessionCard = (title: string, session: "FN" | "AN", status: string) => {

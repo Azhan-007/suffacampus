@@ -372,10 +372,11 @@ export default function StudentDashboard() {
   };
 
   const getAttendanceIcon = (status: string) => {
-    if (status === "Present") return { name: "check-circle", color: "#10B981", bgColor: "rgba(16, 185, 129, 0.10)" };
-    if (status === "Absent") return { name: "cancel", color: "#EF4444", bgColor: "rgba(239, 68, 68, 0.10)" };
-    if (status === "Late") return { name: "schedule", color: "#F59E0B", bgColor: "rgba(245, 158, 11, 0.10)" };
-    if (status === "Excused") return { name: "info", color: "#3B82F6", bgColor: "rgba(59, 130, 246, 0.10)" };
+    const s = (status || "").trim();
+    if (s === "Present") return { name: "check-circle", color: "#10B981", bgColor: "rgba(16, 185, 129, 0.10)" };
+    if (s === "Absent") return { name: "cancel", color: "#EF4444", bgColor: "rgba(239, 68, 68, 0.10)" };
+    if (s === "Late") return { name: "access-time", color: "#F59E0B", bgColor: "rgba(245, 158, 11, 0.10)" };
+    if (s === "Excused") return { name: "info", color: "#3B82F6", bgColor: "rgba(59, 130, 246, 0.10)" };
     return { name: "help-outline", color: "#94A3B8", bgColor: "rgba(148, 163, 184, 0.10)" }; // Not Marked
   };
 
