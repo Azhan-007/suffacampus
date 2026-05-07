@@ -8,7 +8,7 @@ const DEFAULT_TIMEOUT_MS = 15_000; // 15 seconds
 const MAX_RETRIES = 1;
 const RETRY_BASE_MS = 500;
 const RETRYABLE_STATUSES = new Set([408, 502, 503, 504]);
-const DEFAULT_TESTING_API_URL = "https://suffacampus-backend-new.onrender.com/api/v1";
+const DEFAULT_TESTING_API_URL = "https://suffacampus-api-azhan.azurewebsites.net/api/v1";
 const SESSION_TOKEN_STORAGE_KEY = "SuffaCampus-session-access-token";
 const SESSION_TOKEN_UID_STORAGE_KEY = "SuffaCampus-session-access-token-uid";
 

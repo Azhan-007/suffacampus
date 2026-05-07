@@ -1,4 +1,4 @@
-const DEFAULT_TESTING_API_URL = "https://suffacampus-backend-new.onrender.com/api/v1";
+const DEFAULT_TESTING_API_URL = "https://suffacampus-api-azhan.azurewebsites.net/api/v1";
 
 function normalizeApiUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
