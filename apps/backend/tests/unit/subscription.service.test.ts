@@ -49,6 +49,22 @@ jest.mock("../../src/lib/prisma", () => ({
         mockState.schools.set(id, updated);
         return updated;
       }),
+      updateMany: jest.fn(async ({ where, data }) => {
+        // Simulate optimistic locking: only update if subscriptionStatus matches
+        const existing = mockState.schools.get(where.id);
+        if (!existing) return { count: 0 };
+        if (where.subscriptionStatus) {
+          // The production code defaults null/undefined status to "trial",
+          // so the where clause may contain "trial" for a record with no status.
+          const effectiveStatus = existing.subscriptionStatus ?? "trial";
+          if (effectiveStatus !== where.subscriptionStatus) {
+            return { count: 0 };
+          }
+        }
+        const updated = { ...existing, ...data, updatedAt: new Date() };
+        mockState.schools.set(where.id, updated);
+        return { count: 1 };
+      }),
     },
   },
 }));

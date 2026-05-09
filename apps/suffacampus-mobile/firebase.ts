@@ -8,6 +8,7 @@
  */
 
 import { getApps, initializeApp } from "firebase/app";
+// @ts-ignore: getReactNativePersistence exists at runtime but is missing from Firebase v12 type definitions
 import { getAuth, initializeAuth, getReactNativePersistence } from "firebase/auth";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 import { env } from "./config/env";
