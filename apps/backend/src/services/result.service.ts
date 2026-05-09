@@ -153,8 +153,24 @@ export async function updateResult(
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
   if (!existing.isActive) throw Errors.notFound("Result", resultId);
 
-  // Recalculate derived fields if marks changed
-  const updateData: Record<string, unknown> = { ...data };
+  // Explicit field mapping — never spread raw input into Prisma
+  const updateData: Record<string, unknown> = {};
+  if (data.studentId !== undefined) updateData.studentId = data.studentId;
+  if (data.studentName !== undefined) updateData.studentName = data.studentName;
+  if (data.rollNumber !== undefined) updateData.rollNumber = data.rollNumber;
+  if (data.classId !== undefined) updateData.classId = data.classId;
+  if (data.sectionId !== undefined) updateData.sectionId = data.sectionId;
+  if (data.className !== undefined) updateData.className = data.className;
+  if (data.examType !== undefined) updateData.examType = data.examType;
+  if (data.examName !== undefined) updateData.examName = data.examName;
+  if (data.subject !== undefined) updateData.subject = data.subject;
+  if (data.marksObtained !== undefined) updateData.marksObtained = data.marksObtained;
+  if (data.totalMarks !== undefined) updateData.totalMarks = data.totalMarks;
+  if (data.grade !== undefined) updateData.grade = data.grade;
+  if (data.status !== undefined) updateData.status = data.status;
+  if (data.rank !== undefined) updateData.rank = data.rank;
+  if (data.remarks !== undefined) updateData.remarks = data.remarks;
+  if (data.published !== undefined) updateData.published = data.published;
   if (data.marksObtained !== undefined || data.totalMarks !== undefined) {
     const marks = data.marksObtained ?? existing.marksObtained;
     const total = data.totalMarks ?? existing.totalMarks;

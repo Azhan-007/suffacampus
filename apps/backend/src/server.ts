@@ -411,6 +411,23 @@ async function main() {
   // Initialise Sentry before anything else (no-op if SENTRY_DSN not set)
   initSentry();
 
+  // Crash safety: log fatal errors to Sentry/trackError before exit.
+  // Without this, uncaught errors in cron callbacks, fire-and-forget
+  // promises, or BullMQ event handlers kill the process silently.
+  process.on("uncaughtException", (err) => {
+    console.error("FATAL: uncaughtException", err);
+    void trackError({ error: err, metadata: { context: "uncaughtException" } });
+    void flushSentry(2000).finally(() => process.exit(1));
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    console.error("FATAL: unhandledRejection", reason);
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    void trackError({ error: err, metadata: { context: "unhandledRejection" } });
+    // Don't exit — Node.js 22+ does not crash on unhandled rejections by default,
+    // and crashing here could kill in-flight financial transactions.
+  });
+
   const server = buildServer();
 
   const port = env.PORT;

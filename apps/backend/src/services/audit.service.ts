@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { createLogger } from "../utils/logger";
 import { assertSchoolScope } from "../lib/tenant-scope";
+import { recordAuditWriteFailure } from "../plugins/metrics";
 
 const log = createLogger("audit");
 
@@ -105,6 +106,7 @@ export async function writeAuditLog(
       },
     })
     .catch((err: unknown) => {
+      recordAuditWriteFailure();
       log.error(
         { err, action: normalizedAction, schoolId: normalizedSchoolId, userId },
         "Failed to write audit log"

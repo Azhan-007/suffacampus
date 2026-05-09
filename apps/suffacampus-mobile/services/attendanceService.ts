@@ -13,7 +13,7 @@
  */
 
 import { apiFetch } from "./api";
-import { enqueueOfflineMutation, flushOfflineQueue } from "./offlineSyncQueue";
+import { enqueueOfflineMutation } from "./offlineSyncQueue";
 
 export interface AttendanceRecord {
   id?: string;
@@ -53,6 +53,7 @@ export async function markAttendance(
       path: "/attendance",
       method: "POST",
       body: payload,
+      dedupKey: `att:${studentId}:${date}`,
     });
     return { synced: false, queued: true, queueId };
   }
@@ -258,32 +259,8 @@ export async function bulkMarkAttendance(
       path: "/attendance/bulk",
       method: "POST",
       body: payload,
+      dedupKey: `att-bulk:${payload.classId}:${payload.sectionId}:${payload.date}`,
     });
     return { synced: false, queued: true, queueId };
   }
-}
-
-/**
- * Try flushing any queued attendance mutations.
- * Call this after reconnect/login/app foreground to reduce stale queued writes.
- */
-export async function flushQueuedAttendanceMutations(): Promise<{
-  flushed: number;
-  remaining: number;
-}> {
-  return flushOfflineQueue({
-    paths: [
-      // Attendance endpoints
-      "/attendance",
-      "/attendance/bulk",
-      // Assignment submission endpoints
-      "/submissions",
-      // Student fee/payment endpoints
-      "/payments",
-      "/payments/create-order",
-      // Admin fee management endpoints
-      "/fees",
-    ],
-    maxItems: 50, // Increased from 25 to handle more diverse mutation types
-  });
 }

@@ -7,7 +7,7 @@ import { prisma } from "../../lib/prisma";
 import { authenticate } from "../../middleware/auth";
 import { tenantGuard } from "../../middleware/tenant";
 import { roleMiddleware } from "../../middleware/role";
-import { ROLES, ROLE_PERMISSIONS } from "../../services/permission.service";
+import { ROLES, ROLE_PERMISSIONS, Permission } from "../../services/permission.service";
 import { sendSuccess } from "../../utils/response";
 import { Errors } from "../../errors";
 import {
@@ -175,8 +175,18 @@ export default async function settingsRoutes(server: FastifyInstance) {
     }
   );
 
+  const VALID_PERMISSION_VALUES = Object.values(Permission) as string[];
+
+  /** Roles that cannot have their permissions edited by school admins. */
+  const IMMUTABLE_ROLES = ["SuperAdmin", "Admin", "Principal"];
+
   const updatePermissionsSchema = z.object({
-    permissions: z.array(z.string().min(1)).default([]),
+    permissions: z.array(
+      z.string().min(1).refine(
+        (p) => VALID_PERMISSION_VALUES.includes(p),
+        { message: "Invalid permission value" }
+      )
+    ).default([]),
   }).strict();
 
   // PUT /settings/permissions/:role
@@ -186,6 +196,13 @@ export default async function settingsRoutes(server: FastifyInstance) {
     async (request, reply) => {
       if (!ROLES.includes(request.params.role as (typeof ROLES)[number])) {
         throw Errors.badRequest(`Invalid role: ${request.params.role}`);
+      }
+
+      // Prevent escalation — protected roles cannot be modified
+      if (IMMUTABLE_ROLES.includes(request.params.role)) {
+        throw Errors.badRequest(
+          `Cannot modify permissions for protected role: ${request.params.role}`
+        );
       }
 
       const parsed = updatePermissionsSchema.safeParse(request.body);

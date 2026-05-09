@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import type { MarkAttendanceInput } from "../schemas/attendance.schema";
 import { writeAuditLog } from "./audit.service";
@@ -87,36 +88,78 @@ export async function markAttendance(
     return updated;
   }
 
-  // 4. Create new attendance record
-  const record = await prisma.attendance.create({
-    data: {
-      schoolId,
-      markedBy,
-      studentId: data.studentId,
-      studentName: data.studentName,
-      classId: data.classId,
-      sectionId: data.sectionId,
-      date: attendanceDate,
+  // 4. Create new attendance record.
+  // Race condition guard: if another request created the same record
+  // between our findUnique and this create, Prisma throws P2002
+  // (unique constraint violation). We catch it and fall back to update.
+  try {
+    const record = await prisma.attendance.create({
+      data: {
+        schoolId,
+        markedBy,
+        studentId: data.studentId,
+        studentName: data.studentName,
+        classId: data.classId,
+        sectionId: data.sectionId,
+        date: attendanceDate,
+        session,
+        status: data.status as any,
+        remarks: data.remarks,
+      },
+    });
+
+    await writeAuditLog("MARK_ATTENDANCE", markedBy, schoolId, {
+      attendanceId: record.id,
+      studentId: record.studentId,
+      date: record.date,
       session,
-      status: data.status as any,
-      remarks: data.remarks,
-    },
-  });
+      status: record.status,
+      classId: record.classId,
+      sectionId: record.sectionId,
+    });
 
-  await writeAuditLog("MARK_ATTENDANCE", markedBy, schoolId, {
-    attendanceId: record.id,
-    studentId: record.studentId,
-    date: record.date,
-    session,
-    status: record.status,
-    classId: record.classId,
-    sectionId: record.sectionId,
-  });
+    // Fire push notification to linked parents (non-blocking)
+    notifyParentsOfAttendance(schoolId, data.studentId, data.studentName ?? "", record.status).catch(() => {});
 
-  // Fire push notification to linked parents (non-blocking)
-  notifyParentsOfAttendance(schoolId, data.studentId, data.studentName ?? "", record.status).catch(() => {});
+    return record;
+  } catch (err) {
+    // P2002 = unique constraint violation — another request won the race
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const raced = await prisma.attendance.findUnique({
+        where: {
+          schoolId_studentId_date_session: {
+            schoolId,
+            studentId: data.studentId,
+            date: attendanceDate,
+            session,
+          },
+        },
+      });
 
-  return record;
+      if (raced) {
+        const updated = await prisma.attendance.update({
+          where: { id: raced.id },
+          data: {
+            status: data.status as any,
+            markedBy,
+            remarks: data.remarks,
+          },
+        });
+
+        await writeAuditLog("UPDATE_ATTENDANCE", markedBy, schoolId, {
+          attendanceId: updated.id,
+          studentId: updated.studentId,
+          date: updated.date,
+          session,
+          status: updated.status,
+        });
+
+        return updated;
+      }
+    }
+
+    throw err;
+  }
 }
 
 /**

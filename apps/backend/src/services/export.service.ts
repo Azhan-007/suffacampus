@@ -1,5 +1,8 @@
 /**
  * CSV export service — generates CSV from PostgreSQL via Prisma.
+ *
+ * Uses cursor-batched async generators for O(batch) memory usage.
+ * All exports stream directly to the HTTP response.
  */
 
 import { prisma } from "../lib/prisma";
@@ -108,54 +111,113 @@ function rowToCsv(data: Record<string, unknown>, columns: ExportColumn[]): strin
     .join(",");
 }
 
-/**
- * Export data to CSV using Prisma queries.
- */
-export async function exportToCsv(options: ExportOptions): Promise<string> {
-  const { entity, schoolId, columns, filters, limit } = options;
-  assertSchoolScope(schoolId);
+// ---------------------------------------------------------------------------
+// Cursor-batched query helper
+// ---------------------------------------------------------------------------
 
-  let records: Record<string, unknown>[];
+const EXPORT_BATCH_SIZE = 500;
 
-  const where: any = { schoolId, ...filters };
-  const take = limit ?? 10000;
+async function queryBatch(
+  entity: string,
+  where: any,
+  take: number,
+  cursor?: string
+): Promise<Record<string, unknown>[]> {
+  const cursorArgs = cursor ? { cursor: { id: cursor }, skip: 1 } : {};
 
   switch (entity) {
     case "students":
-      records = await prisma.student.findMany({ where: { ...where, isDeleted: false }, take }) as any;
-      break;
+      return (await prisma.student.findMany({
+        where: { ...where, isDeleted: false },
+        take,
+        orderBy: { id: "asc" },
+        ...cursorArgs,
+      })) as any;
     case "teachers":
-      records = await prisma.teacher.findMany({ where: { ...where, isDeleted: false }, take }) as any;
-      break;
+      return (await prisma.teacher.findMany({
+        where: { ...where, isDeleted: false },
+        take,
+        orderBy: { id: "asc" },
+        ...cursorArgs,
+      })) as any;
     case "fees":
-      records = await prisma.fee.findMany({ where, take }) as any;
-      break;
+      return (await prisma.fee.findMany({
+        where,
+        take,
+        orderBy: { id: "asc" },
+        ...cursorArgs,
+      })) as any;
     case "attendance":
-      records = await prisma.attendance.findMany({ where, take }) as any;
-      break;
+      return (await prisma.attendance.findMany({
+        where,
+        take,
+        orderBy: { id: "asc" },
+        ...cursorArgs,
+      })) as any;
     case "results":
-      records = await prisma.result.findMany({ where: { ...where, isActive: true }, take }) as any;
-      break;
+      return (await prisma.result.findMany({
+        where: { ...where, isActive: true },
+        take,
+        orderBy: { id: "asc" },
+        ...cursorArgs,
+      })) as any;
     default:
       throw new Error(`Unknown export entity: ${entity}`);
   }
-
-  const header = columns.map((c) => escapeCsvField(c.header)).join(",");
-  const rows = records.map((rec) => rowToCsv(rec, columns));
-
-  return [header, ...rows].join("\n");
 }
 
-export async function exportByTemplate(
+// ---------------------------------------------------------------------------
+// Streaming export — cursor-batched async generator
+// ---------------------------------------------------------------------------
+
+/**
+ * Async generator that yields CSV rows in batches.
+ * Memory usage is O(EXPORT_BATCH_SIZE) regardless of total records.
+ */
+export async function* exportToCsvStream(options: ExportOptions): AsyncGenerator<string> {
+  const { entity, schoolId, columns, filters, limit } = options;
+  assertSchoolScope(schoolId);
+
+  const where: any = { schoolId, ...filters };
+  const maxRecords = limit ?? 100_000;
+
+  // Yield header row
+  yield columns.map((c) => escapeCsvField(c.header)).join(",") + "\n";
+
+  let cursor: string | undefined;
+  let yielded = 0;
+
+  while (yielded < maxRecords) {
+    const batchSize = Math.min(EXPORT_BATCH_SIZE, maxRecords - yielded);
+    const batch = await queryBatch(entity, where, batchSize, cursor);
+
+    if (batch.length === 0) break;
+
+    for (const rec of batch) {
+      yield rowToCsv(rec, columns) + "\n";
+      yielded++;
+    }
+
+    cursor = (batch[batch.length - 1] as any).id;
+    if (batch.length < batchSize) break;
+  }
+}
+
+
+/**
+ * Streaming version of exportByTemplate.
+ * Returns an async generator yielding CSV rows.
+ */
+export function exportByTemplateStream(
   template: string,
   schoolId: string,
   filters?: Record<string, unknown>,
   limit?: number
-): Promise<string> {
+): AsyncGenerator<string> {
   assertSchoolScope(schoolId);
 
   const columns = EXPORT_TEMPLATES[template];
   if (!columns) throw new Error(`Unknown export template: ${template}`);
 
-  return exportToCsv({ entity: template, schoolId, columns, filters, limit });
+  return exportToCsvStream({ entity: template, schoolId, columns, filters, limit });
 }

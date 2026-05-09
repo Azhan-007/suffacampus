@@ -13,6 +13,7 @@ import {
 import { Permission, PermissionService } from "./permission.service";
 import { createLogger } from "../utils/logger";
 import { assertSchoolScope } from "../lib/tenant-scope";
+import { cacheDel } from "../lib/cache";
 
 const log = createLogger("fee-service");
 
@@ -163,6 +164,8 @@ export async function createFee(
     // Keep fee creation non-blocking if notification side-effect fails.
   }
 
+  // Invalidate dashboard cache so fee totals reflect the new record
+  void cacheDel(`dashboard:stats:${schoolId}`);
   return fee;
 }
 
@@ -219,10 +222,17 @@ export async function updateFee(
   if (!existing) throw Errors.notFound("Fee", feeId);
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
 
-  const updateData: Record<string, unknown> = {
-    ...data,
-    status: data.status as any,
-  };
+  // Explicit field mapping — never spread raw input into Prisma
+  const updateData: Record<string, unknown> = {};
+  if (data.studentId !== undefined) updateData.studentId = data.studentId;
+  if (data.studentName !== undefined) updateData.studentName = data.studentName;
+  if (data.classId !== undefined) updateData.classId = data.classId;
+  if (data.sectionId !== undefined) updateData.sectionId = data.sectionId;
+  if (data.status !== undefined) updateData.status = data.status;
+  if (data.paymentMode !== undefined) updateData.paymentMode = data.paymentMode;
+  if (data.transactionId !== undefined) updateData.transactionId = data.transactionId;
+  if (data.feeType !== undefined) updateData.feeType = data.feeType;
+  if (data.remarks !== undefined) updateData.remarks = data.remarks;
 
   if (data.amount !== undefined) {
     updateData.amount = moneyFromInput(data.amount);
@@ -281,6 +291,8 @@ export async function softDeleteFee(
     feeId,
     studentId: existing.studentId,
   });
+  // Invalidate dashboard cache so fee totals reflect the deletion
+  void cacheDel(`dashboard:stats:${schoolId}`);
   return true;
 }
 
@@ -288,45 +300,61 @@ export async function softDeleteFee(
 export async function getFeeStats(schoolId: string) {
   assertSchoolScope(schoolId);
 
-  const fees = await prisma.fee.findMany({
-    where: { schoolId },
-    select: {
-      status: true,
-      amount: true,
-      amountPaid: true,
-    },
-  });
+  const [statusGroups, totals] = await Promise.all([
+    prisma.fee.groupBy({
+      by: ["status"],
+      where: { schoolId },
+      _count: true,
+      _sum: { amount: true, amountPaid: true },
+    }),
+    prisma.fee.aggregate({
+      where: { schoolId },
+      _sum: { amount: true },
+      _count: true,
+    }),
+  ]);
 
-  const zeroMoney = moneyFrom(null, 0);
-  const statusMap: Record<string, { count: number; sum: ReturnType<typeof moneyFrom>; paid: ReturnType<typeof moneyFrom> }> = {};
-  let totalFeesMoney = zeroMoney;
+  const totalFees = moneyToNumber(moneyFrom(totals._sum.amount));
 
-  for (const fee of fees) {
-    const amountMoney = moneyFrom(fee.amount);
-    const paidMoney = moneyFrom(fee.amountPaid);
+  let collectedAmountMoney = moneyFrom(null, 0);
+  let pendingAmountMoney = moneyFrom(null, 0);
+  let paidCount = 0;
+  let pendingCount = 0;
+  let overdueCount = 0;
+  let partialCount = 0;
 
-    totalFeesMoney = totalFeesMoney.plus(amountMoney);
+  for (const group of statusGroups) {
+    const sumMoney = moneyFrom(group._sum.amount);
+    const paidMoney = moneyFrom(group._sum.amountPaid);
 
-    if (!statusMap[fee.status]) {
-      statusMap[fee.status] = { count: 0, sum: zeroMoney, paid: zeroMoney };
+    switch (group.status) {
+      case "Paid":
+        paidCount = group._count;
+        collectedAmountMoney = collectedAmountMoney.plus(sumMoney);
+        break;
+      case "Partial":
+        partialCount = group._count;
+        collectedAmountMoney = collectedAmountMoney.plus(paidMoney);
+        break;
+      case "Pending":
+        pendingCount = group._count;
+        pendingAmountMoney = pendingAmountMoney.plus(sumMoney);
+        break;
+      case "Overdue":
+        overdueCount = group._count;
+        pendingAmountMoney = pendingAmountMoney.plus(sumMoney);
+        break;
     }
-
-    statusMap[fee.status].count += 1;
-    statusMap[fee.status].sum = statusMap[fee.status].sum.plus(amountMoney);
-    statusMap[fee.status].paid = statusMap[fee.status].paid.plus(paidMoney);
   }
 
-  const collectedAmountMoney = (statusMap.Paid?.sum ?? zeroMoney).plus(statusMap.Partial?.paid ?? zeroMoney);
-  const pendingAmountMoney = (statusMap.Pending?.sum ?? zeroMoney).plus(statusMap.Overdue?.sum ?? zeroMoney);
-
   return {
-    totalFees: moneyToNumber(totalFeesMoney),
+    totalFees,
     collectedAmount: moneyToNumber(collectedAmountMoney),
     pendingAmount: moneyToNumber(pendingAmountMoney),
-    totalRecords: fees.length,
-    paidCount: statusMap.Paid?.count ?? 0,
-    pendingCount: statusMap.Pending?.count ?? 0,
-    overdueCount: statusMap.Overdue?.count ?? 0,
-    partialCount: statusMap.Partial?.count ?? 0,
+    totalRecords: totals._count,
+    paidCount,
+    pendingCount,
+    overdueCount,
+    partialCount,
   };
 }

@@ -1,7 +1,8 @@
 import { prisma } from "../lib/prisma";
-import { recordDashboardQuery } from "../plugins/metrics";
+import { recordDashboardQuery, recordSingleflightCoalesce } from "../plugins/metrics";
 import { moneyFrom, moneyToNumber } from "../utils/safe-fields";
 import { assertSchoolScope } from "../lib/tenant-scope";
+import { cacheGet, cacheSet } from "../lib/cache";
 
 /**
  * Dashboard statistics for a school — uses Prisma count/aggregate queries.
@@ -18,9 +19,38 @@ export interface DashboardStats {
   attendanceRate?: number;
 }
 
+// Singleflight map: when cache misses, only one request per school
+// actually runs the DB queries. All other concurrent callers await
+// the same in-flight promise. Prevents cache stampede.
+const inflight = new Map<string, Promise<DashboardStats>>();
+
 export async function getDashboardStats(schoolId: string): Promise<DashboardStats> {
   assertSchoolScope(schoolId);
 
+  // Check cache first (60s TTL)
+  const cacheKey = `dashboard:stats:${schoolId}`;
+  const cached = await cacheGet<DashboardStats>(cacheKey);
+  if (cached) return cached;
+
+  // Singleflight: if another request is already computing this school's
+  // stats, wait for that result instead of firing 6 more DB queries.
+  const existing = inflight.get(cacheKey);
+  if (existing) {
+    recordSingleflightCoalesce("dashboard");
+    return existing;
+  }
+
+  const promise = computeDashboardStats(schoolId, cacheKey);
+  inflight.set(cacheKey, promise);
+
+  try {
+    return await promise;
+  } finally {
+    inflight.delete(cacheKey);
+  }
+}
+
+async function computeDashboardStats(schoolId: string, cacheKey: string): Promise<DashboardStats> {
   const started = process.hrtime.bigint();
   let ok = false;
   try {
@@ -30,35 +60,22 @@ export async function getDashboardStats(schoolId: string): Promise<DashboardStat
       totalClasses,
       totalEvents,
       totalBooks,
-      feeRows,
+      feeAgg,
     ] = await Promise.all([
       prisma.student.count({ where: { schoolId, isDeleted: false } }),
       prisma.teacher.count({ where: { schoolId, isDeleted: false } }),
       prisma.class.count({ where: { schoolId, isActive: true } }),
       prisma.event.count({ where: { schoolId, isActive: true } }),
       prisma.book.count({ where: { schoolId, isActive: true } }),
-      prisma.fee.findMany({
+      prisma.fee.aggregate({
         where: { schoolId },
-        select: {
-          amount: true,
-          amountPaid: true,
-        },
+        _sum: { amount: true, amountPaid: true },
       }),
     ]);
 
-    let totalFeesMoney = moneyFrom(null, 0);
-    let collectedFeesMoney = moneyFrom(null, 0);
-
-    for (const feeRow of feeRows) {
-      totalFeesMoney = totalFeesMoney.plus(moneyFrom(feeRow.amount));
-      collectedFeesMoney = collectedFeesMoney.plus(
-        moneyFrom(feeRow.amountPaid)
-      );
-    }
-
-    const totalFees = moneyToNumber(totalFeesMoney);
-    const collectedFees = moneyToNumber(collectedFeesMoney);
-    const pendingFees = moneyToNumber(totalFeesMoney.minus(collectedFeesMoney));
+    const totalFees = moneyToNumber(moneyFrom(feeAgg._sum.amount));
+    const collectedFees = moneyToNumber(moneyFrom(feeAgg._sum.amountPaid));
+    const pendingFees = totalFees - collectedFees;
 
     const payload = {
       totalStudents,
@@ -71,6 +88,7 @@ export async function getDashboardStats(schoolId: string): Promise<DashboardStat
       pendingFees,
     };
     ok = true;
+    void cacheSet(cacheKey, payload, 60); // 60s TTL — fire and forget
     return payload;
   } finally {
     const durationMs = Number(process.hrtime.bigint() - started) / 1e6;

@@ -1,4 +1,4 @@
-﻿import pino from "pino";
+import pino from "pino";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { Errors } from "../errors";
@@ -216,7 +216,7 @@ export async function createNotification(
 
 export async function getNotificationsForUser(
   context: NotificationContext,
-  options: { limit?: number } = {}
+  options: { limit?: number; cursor?: string } = {}
 ) {
   assertSchoolScope(context.schoolId);
 
@@ -226,26 +226,62 @@ export async function getNotificationsForUser(
   });
 
   if (!preferences.inAppEnabled) {
-    return [];
+    return { data: [], pagination: { cursor: null, hasMore: false } };
   }
 
-  const limit = options.limit ?? 50;
+  const limit = Math.min(options.limit ?? 50, 200);
   let notifications: Array<
     Prisma.NotificationGetPayload<{
       include: { reads: { where: { userId: string }; select: { readAt: true } } };
     }>
   > = [];
 
+  const cursorArgs = options.cursor
+    ? { cursor: { id: options.cursor }, skip: 1 }
+    : {};
+
+  // Build excluded referenceTypes from disabled preferences
+  // This moves preference filtering to the DB for consistent page sizes
+  const excludedReferenceTypes: string[] = [];
+  if (!preferences.attendanceEnabled) excludedReferenceTypes.push("ATTENDANCE");
+  if (!preferences.feesEnabled) {
+    excludedReferenceTypes.push("FEE", "PAYMENT");
+  }
+  if (!preferences.resultsEnabled) excludedReferenceTypes.push("RESULTS");
+
+  // Build the WHERE clause with optional referenceType exclusion
+  const whereClause: Record<string, unknown> = {
+    schoolId: context.schoolId,
+    OR: [
+      { targetType: "USER", targetId: context.userId },
+      { targetType: "ROLE", targetId: context.role },
+      { targetType: "SCHOOL" },
+    ],
+  };
+
+  if (excludedReferenceTypes.length > 0) {
+    // Exclude disabled types. Notifications with null referenceType (GENERAL)
+    // are only excluded if generalEnabled is false.
+    whereClause.NOT = {
+      referenceType: { in: excludedReferenceTypes },
+    };
+  }
+
+  // If general notifications are disabled, also exclude null/empty referenceType
+  if (!preferences.generalEnabled) {
+    // Use AND to combine with existing NOT clause
+    const existingNot = whereClause.NOT;
+    whereClause.AND = [
+      ...(existingNot ? [{ NOT: existingNot }] : []),
+      { NOT: { referenceType: null } },
+    ];
+    // Only keep the NOT that was moved into AND
+    if (existingNot) delete whereClause.NOT;
+  }
+
   try {
     notifications = await prisma.notification.findMany({
-      where: {
-        schoolId: context.schoolId,
-        OR: [
-          { targetType: "USER", targetId: context.userId },
-          { targetType: "ROLE", targetId: context.role },
-          { targetType: "SCHOOL" },
-        ],
-      },
+      where: whereClause as any,
       include: {
         reads: {
           where: { userId: context.userId },
@@ -253,7 +289,8 @@ export async function getNotificationsForUser(
         },
       },
       orderBy: { createdAt: "desc" },
-      take: limit,
+      take: limit + 1,
+      ...cursorArgs,
     });
   } catch (error) {
     if (isSchemaCompatibilityError(error, ["NotificationRead"])) {
@@ -268,7 +305,8 @@ export async function getNotificationsForUser(
             ],
           },
           orderBy: { createdAt: "desc" },
-          take: limit,
+          take: limit + 1,
+          ...cursorArgs,
         });
 
         notifications = fallbackNotifications.map((notification) => ({
@@ -277,26 +315,24 @@ export async function getNotificationsForUser(
         })) as typeof notifications;
       } catch (fallbackError) {
         if (isSchemaCompatibilityError(fallbackError, ["Notification", "NotificationRead"])) {
-          return [];
+          return { data: [], pagination: { cursor: null, hasMore: false } };
         }
 
         throw fallbackError;
       }
     } else if (isSchemaCompatibilityError(error, ["Notification"])) {
-      return [];
+      return { data: [], pagination: { cursor: null, hasMore: false } };
     } else {
       throw error;
     }
   }
 
-  const filtered = notifications.filter((notification) =>
-    isPreferenceEnabled(
-      preferences,
-      resolvePreferenceType(notification.referenceType)
-    )
-  );
+  const hasMore = notifications.length > limit;
+  const sliced = hasMore ? notifications.slice(0, limit) : notifications;
 
-  return filtered.map((notification) => {
+  // Preference filtering is now done at the DB level via the WHERE clause
+  // above, so we don't need to post-filter here. Just map to response shape.
+  const data = sliced.map((notification) => {
     const readAt = notification.reads[0]?.readAt ?? null;
     const { reads, ...rest } = notification;
     return {
@@ -305,6 +341,13 @@ export async function getNotificationsForUser(
       readAt,
     };
   });
+
+  const nextCursor = sliced.length > 0 ? sliced[sliced.length - 1].id : null;
+
+  return {
+    data,
+    pagination: { cursor: nextCursor, hasMore },
+  };
 }
 
 export async function markAsRead(
@@ -371,47 +414,52 @@ export async function markAsRead(
 export async function markAllAsRead(context: NotificationContext): Promise<number> {
   assertSchoolScope(context.schoolId);
 
-  let notifications: Array<{ id: string }> = [];
-
+  // Use raw SQL INSERT...SELECT to avoid loading all notification IDs into memory.
+  // This handles dedup via ON CONFLICT and runs entirely on the DB.
   try {
-    notifications = await prisma.notification.findMany({
-      where: {
-        schoolId: context.schoolId,
-        OR: [
-          { targetType: "USER", targetId: context.userId },
-          { targetType: "ROLE", targetId: context.role },
-          { targetType: "SCHOOL" },
-        ],
-      },
-      select: { id: true },
-    });
+    const result = await prisma.$executeRaw`
+      INSERT INTO "NotificationRead" ("id", "notificationId", "userId", "readAt")
+      SELECT gen_random_uuid(), n."id", ${context.userId}, NOW()
+      FROM "Notification" n
+      WHERE n."schoolId" = ${context.schoolId}
+        AND (
+          (n."targetType" = 'SCHOOL')
+          OR (n."targetType" = 'USER' AND n."targetId" = ${context.userId})
+          OR (n."targetType" = 'ROLE' AND n."targetId" = ${context.role})
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "NotificationRead" nr
+          WHERE nr."notificationId" = n."id" AND nr."userId" = ${context.userId}
+        )
+    `;
+    return result;
   } catch (error) {
-    if (isSchemaCompatibilityError(error, ["Notification"])) {
-      return 0;
+    if (isSchemaCompatibilityError(error, ["NotificationRead"])) {
+      // Legacy DBs without NotificationRead — fall back to counting
+      try {
+        const count = await prisma.notification.count({
+          where: {
+            schoolId: context.schoolId,
+            OR: [
+              { targetType: "USER", targetId: context.userId },
+              { targetType: "ROLE", targetId: context.role },
+              { targetType: "SCHOOL" },
+            ],
+          },
+        });
+        return count;
+      } catch (fallbackError) {
+        if (isSchemaCompatibilityError(fallbackError, ["Notification"])) {
+          return 0;
+        }
+        throw fallbackError;
+      }
     }
 
-    throw error;
-  }
-
-  if (notifications.length === 0) return 0;
-
-  try {
-    const result = await prisma.notificationRead.createMany({
-      data: notifications.map((n) => ({
-        notificationId: n.id,
-        userId: context.userId,
-      })),
-      skipDuplicates: true,
-    });
-
-    return result.count;
-  } catch (error) {
-    if (!isSchemaCompatibilityError(error, ["NotificationRead"])) {
+    if (!isSchemaCompatibilityError(error, ["Notification"])) {
       throw error;
     }
-
-    // Legacy DBs may not have NotificationRead yet; treat as no-op.
-    return notifications.length;
+    return 0;
   }
 }
 

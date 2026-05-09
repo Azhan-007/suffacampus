@@ -409,14 +409,14 @@ describe("getNotificationsForUser", () => {
       role: "Teacher",
     });
 
-    expect(result.map((n) => n.id)).toEqual([
+    expect(result.data.map((n) => n.id)).toEqual([
       "n3",
       "n2",
       "n1",
     ]);
 
-    const readItem = result.find((n) => n.id === "n1");
-    const unreadItem = result.find((n) => n.id === "n2");
+    const readItem = result.data.find((n) => n.id === "n1");
+    const unreadItem = result.data.find((n) => n.id === "n2");
 
     expect(readItem?.isRead).toBe(true);
     expect(unreadItem?.isRead).toBe(false);
@@ -441,7 +441,7 @@ describe("getNotificationsForUser", () => {
       role: "Admin",
     });
 
-    expect(result).toEqual([]);
+    expect(result.data).toEqual([]);
   });
 
   it("filters notifications when preference is disabled", async () => {
@@ -474,7 +474,7 @@ describe("getNotificationsForUser", () => {
       role: "Admin",
     });
 
-    const ids = result.map((n) => n.id);
+    const ids = result.data.map((n) => n.id);
     expect(ids).toContain("n_general");
     expect(ids).not.toContain("n_fee");
   });

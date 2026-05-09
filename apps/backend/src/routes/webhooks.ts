@@ -5,7 +5,7 @@ import {
   type PaymentCapturedPayload,
   verifyStripeWebhookSignature,
 } from "../services/payment.service";
-import { reactivateSubscription } from "../services/subscription.service";
+
 import { writeAuditLog } from "../services/audit.service";
 import { logWebhookFailure } from "../services/webhook-failure.service";
 import { enqueueWebhookRetry } from "../services/webhook-retry-queue.service";
@@ -41,7 +41,9 @@ interface RazorpayWebhookPayload {
 }
 
 interface StripeWebhookPayload {
+  id?: string;
   type?: string;
+  created?: number;
   data?: {
     object?: Record<string, unknown>;
   };
@@ -206,6 +208,24 @@ export default async function webhookRoutes(server: FastifyInstance) {
       "Razorpay webhook received"
     );
 
+    // ── Idempotency guard ──────────────────────────────────────
+    // Razorpay may retry delivery; deduplicate by event ID.
+    if (razorpayEventId) {
+      const alreadyProcessed = await prisma.webhookEvent.findUnique({
+        where: { eventId: razorpayEventId },
+        select: { id: true },
+      });
+      if (alreadyProcessed) {
+        request.log.info(
+          { eventId: razorpayEventId },
+          "Razorpay webhook duplicate — skipped"
+        );
+        return reply
+          .status(200)
+          .send({ success: true, message: "Already processed" });
+      }
+    }
+
     try {
       switch (event.event) {
         case "payment.captured": {
@@ -236,13 +256,40 @@ export default async function webhookRoutes(server: FastifyInstance) {
           const payment = event.payload.payment?.entity;
           const schoolId = payment?.notes?.schoolId;
 
-          if (schoolId) {
+          if (schoolId && razorpayEventId) {
+            // Atomic: dedup + increment in one transaction to prevent
+            // double-counting on webhook retries
+            await prisma.$transaction(async (tx) => {
+              const existing = await tx.webhookEvent.findUnique({
+                where: { eventId: razorpayEventId },
+                select: { id: true },
+              });
+              if (existing) return; // already processed
+
+              await tx.webhookEvent.create({
+                data: { eventId: razorpayEventId, provider: "razorpay" },
+              });
+
+              await tx.school.updateMany({
+                where: { id: schoolId },
+                data: {
+                  paymentFailureCount: { increment: 1 },
+                },
+              });
+            });
+
+            await writeAuditLog("PAYMENT_FAILED", "system", schoolId, {
+              razorpayPaymentId: payment?.id,
+              errorCode: payment?.error_code,
+              errorDescription: payment?.error_description,
+              errorReason: payment?.error_reason,
+            });
+          } else if (schoolId) {
+            // No event ID — fallback to non-transactional (rare edge case)
             await prisma.school.updateMany({
               where: { id: schoolId },
               data: {
-                paymentFailureCount: {
-                  increment: 1,
-                },
+                paymentFailureCount: { increment: 1 },
               },
             });
 
@@ -315,6 +362,24 @@ export default async function webhookRoutes(server: FastifyInstance) {
             "Razorpay webhook event ignored"
           );
       }
+
+      // Record successful processing for dedup
+      if (razorpayEventId) {
+        try {
+          await prisma.webhookEvent.create({
+            data: {
+              eventId: razorpayEventId,
+              provider: "razorpay",
+            },
+          });
+        } catch (dedupErr) {
+          // Unique constraint race — another instance already recorded it.
+          request.log.debug(
+            { eventId: razorpayEventId, err: dedupErr },
+            "Webhook dedup record race (harmless)"
+          );
+        }
+      }
     } catch (err) {
       request.log.error(
         { err, event: event.event },
@@ -377,7 +442,39 @@ export default async function webhookRoutes(server: FastifyInstance) {
     }
 
     const eventType = event.type ?? "unknown";
-    request.log.info({ type: eventType }, "Stripe webhook received");
+    const stripeEventId = typeof event.id === "string" ? event.id : undefined;
+    request.log.info({ type: eventType, eventId: stripeEventId }, "Stripe webhook received");
+
+    // Timestamp validation — reject stale events (same 5-min window as Razorpay)
+    if (typeof event.created === "number" && event.created > 0) {
+      const eventMs = event.created < 1_000_000_000_000 ? event.created * 1000 : event.created;
+      if (eventMs < Date.now() - RAZORPAY_WEBHOOK_MAX_AGE_MS) {
+        request.log.warn(
+          { type: eventType, eventId: stripeEventId, created: event.created },
+          "Stripe webhook rejected: stale timestamp"
+        );
+        return reply
+          .status(400)
+          .send({ success: false, message: "Webhook too old" });
+      }
+    }
+
+    // Idempotency guard
+    if (stripeEventId) {
+      const alreadyProcessed = await prisma.webhookEvent.findUnique({
+        where: { eventId: stripeEventId },
+        select: { id: true },
+      });
+      if (alreadyProcessed) {
+        request.log.info(
+          { eventId: stripeEventId },
+          "Stripe webhook duplicate — skipped"
+        );
+        return reply
+          .status(200)
+          .send({ success: true, message: "Already processed" });
+      }
+    }
 
     try {
       switch (eventType) {
@@ -386,14 +483,74 @@ export default async function webhookRoutes(server: FastifyInstance) {
           const metadata = (charge.metadata ?? {}) as Record<string, string>;
 
           if (metadata.schoolId) {
-            await writeAuditLog("STRIPE_CHARGE_SUCCEEDED", "system", metadata.schoolId, {
-              chargeId: charge.id,
-              amount: Number(charge.amount ?? 0) / 100,
-              currency: charge.currency,
-              plan: metadata.plan,
+            const plan = metadata.plan ?? "basic";
+            const durationDays = 30;
+            const now = new Date();
+            const periodEnd = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+            const chargeId = String(charge.id ?? "");
+            const chargeAmount = Number(charge.amount ?? 0);
+            const chargeCurrency = String(charge.currency ?? "INR").toUpperCase();
+
+            // Atomic: subscription update + payment record + invoice
+            // Mirrors the Razorpay handlePaymentCaptured transaction pattern
+            await prisma.$transaction(async (tx) => {
+              // Idempotency: check if invoice already exists for this charge
+              const existingInvoice = await tx.invoice.findFirst({
+                where: { razorpayPaymentId: chargeId },
+                select: { id: true },
+              });
+              if (existingInvoice) return;
+
+              await tx.school.update({
+                where: { id: metadata.schoolId },
+                data: {
+                  subscriptionPlan: plan as any,
+                  subscriptionStatus: "active",
+                  currentPeriodStart: now,
+                  currentPeriodEnd: periodEnd,
+                  paymentFailureCount: 0,
+                  lastPaymentId: chargeId,
+                },
+              });
+
+              await tx.legacyPayment.create({
+                data: {
+                  schoolId: metadata.schoolId,
+                  amount: chargeAmount,
+                  currency: chargeCurrency,
+                  status: "completed",
+                  gatewayId: chargeId,
+                  verifiedAt: now,
+                  description: `Stripe subscription payment for ${plan}`,
+                  paymentMethodDetails: {
+                    source: "stripe",
+                    plan,
+                    chargeId,
+                  },
+                },
+              });
+
+              await tx.invoice.create({
+                data: {
+                  schoolId: metadata.schoolId,
+                  plan,
+                  razorpayPaymentId: chargeId, // reuse field for Stripe charge ID
+                  amount: chargeAmount,
+                  currency: chargeCurrency,
+                  status: "paid",
+                  periodStart: now,
+                  periodEnd,
+                  paidAt: now,
+                },
+              });
             });
 
-            await reactivateSubscription(metadata.schoolId, metadata.plan ?? "basic", 30);
+            await writeAuditLog("STRIPE_CHARGE_SUCCEEDED", "system", metadata.schoolId, {
+              chargeId,
+              amount: chargeAmount / 100,
+              currency: chargeCurrency,
+              plan,
+            });
           }
           break;
         }
@@ -437,6 +594,19 @@ export default async function webhookRoutes(server: FastifyInstance) {
 
         default:
           request.log.debug({ type: eventType }, "Stripe webhook event ignored");
+      }
+      // Record successful processing for dedup
+      if (stripeEventId) {
+        try {
+          await prisma.webhookEvent.create({
+            data: { eventId: stripeEventId, provider: "stripe" },
+          });
+        } catch (dedupErr) {
+          request.log.debug(
+            { eventId: stripeEventId, err: dedupErr },
+            "Stripe webhook dedup record race (harmless)"
+          );
+        }
       }
     } catch (err) {
       request.log.error({ err, type: eventType }, "Stripe webhook handler failed");

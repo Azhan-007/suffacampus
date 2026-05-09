@@ -2,11 +2,14 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import { Errors } from "../errors";
 
 const ROLE_CANONICAL_MAP: Record<string, string> = {
+  superadmin: "SuperAdmin",
   admin: "Admin",
+  principal: "Principal",
+  accountant: "Accountant",
   staff: "Staff",
+  teacher: "Teacher",
   student: "Student",
   parent: "Parent",
-  superadmin: "SuperAdmin",
 };
 
 function normalizeRole(role: unknown): string | undefined {
@@ -15,7 +18,9 @@ function normalizeRole(role: unknown): string | undefined {
   const trimmed = role.trim();
   if (!trimmed) return undefined;
 
-  return ROLE_CANONICAL_MAP[trimmed.toLowerCase()] ?? trimmed;
+  // SECURE — return undefined for unknown roles instead of falling through
+  // to the raw string. This ensures only known roles pass RBAC checks.
+  return ROLE_CANONICAL_MAP[trimmed.toLowerCase()];
 }
 
 /**

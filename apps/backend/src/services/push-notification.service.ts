@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Push notification service — Firebase Cloud Messaging (FCM).
  * Device token storage moved to PostgreSQL via Prisma.
  * FCM sending logic remains unchanged (FCM SDK).
@@ -153,13 +153,13 @@ export async function removeDeviceToken(params: {
 }
 
 export async function getUserTokens(userId: string) {
-  return prisma.deviceToken.findMany({ where: { userId } });
+  return prisma.deviceToken.findMany({ where: { userId }, take: 1000 });
 }
 
 export async function getSchoolTokens(schoolId: string) {
   assertSchoolScope(schoolId);
 
-  return prisma.deviceToken.findMany({ where: { schoolId } });
+  return prisma.deviceToken.findMany({ where: { schoolId }, take: 1000 });
 }
 
 // Send push notifications
@@ -223,36 +223,48 @@ export async function sendToSchool(schoolId: string, payload: PushNotificationPa
 async function sendToTokens(tokens: string[], payload: PushNotificationPayload): Promise<SendResult> {
   if (tokens.length === 0) return { successCount: 0, failureCount: 0, invalidTokens: [] };
 
-  const message: admin.messaging.MulticastMessage = {
-    tokens,
-    notification: { title: payload.title, body: payload.body, imageUrl: payload.imageUrl },
-    data: { ...payload.data, actionUrl: payload.actionUrl ?? "" },
-    android: { priority: "high", notification: { channelId: "SuffaCampus_default", clickAction: "FLUTTER_NOTIFICATION_CLICK" } },
-    apns: { payload: { aps: { badge: 1, sound: "default" } } },
-  };
+  // FCM limits sendEachForMulticast to 500 tokens per call
+  const FCM_BATCH_SIZE = 500;
+  let totalSuccess = 0;
+  let totalFailure = 0;
+  const allInvalidTokens: string[] = [];
 
-  const response = await admin.messaging().sendEachForMulticast(message);
-  const invalidTokens: string[] = [];
-  response.responses.forEach((res, idx) => {
-    if (!res.success) {
-      const code = res.error?.code;
-      if (isInvalidTokenErrorCode(code)) {
-        invalidTokens.push(tokens[idx]);
+  for (let i = 0; i < tokens.length; i += FCM_BATCH_SIZE) {
+    const batch = tokens.slice(i, i + FCM_BATCH_SIZE);
+
+    const message: admin.messaging.MulticastMessage = {
+      tokens: batch,
+      notification: { title: payload.title, body: payload.body, imageUrl: payload.imageUrl },
+      data: { ...payload.data, actionUrl: payload.actionUrl ?? "" },
+      android: { priority: "high", notification: { channelId: "SuffaCampus_default", clickAction: "FLUTTER_NOTIFICATION_CLICK" } },
+      apns: { payload: { aps: { badge: 1, sound: "default" } } },
+    };
+
+    const response = await admin.messaging().sendEachForMulticast(message);
+    totalSuccess += response.successCount;
+    totalFailure += response.failureCount;
+
+    response.responses.forEach((res, idx) => {
+      if (!res.success) {
+        const code = res.error?.code;
+        if (isInvalidTokenErrorCode(code)) {
+          allInvalidTokens.push(batch[idx]);
+        }
       }
-    }
-  });
+    });
+  }
 
-  if (invalidTokens.length > 0) {
+  if (allInvalidTokens.length > 0) {
     try {
       await prisma.deviceToken.deleteMany({
-        where: { token: { in: invalidTokens } },
+        where: { token: { in: allInvalidTokens } },
       });
     } catch (err: unknown) {
       log.error({ err }, "Failed to clean up invalid tokens");
     }
   }
 
-  return { successCount: response.successCount, failureCount: response.failureCount, invalidTokens };
+  return { successCount: totalSuccess, failureCount: totalFailure, invalidTokens: allInvalidTokens };
 }
 
 // Push notification templates

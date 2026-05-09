@@ -194,27 +194,36 @@ export default async function paymentRoutes(server: FastifyInstance) {
   );
 
   // GET /api/v1/payments/history
-  server.get<{ Querystring: { page?: string; limit?: string; status?: string } }>(
+  server.get<{ Querystring: { cursor?: string; limit?: string; status?: string; page?: string } }>(
     "/payments/history",
     { preHandler },
     async (request, reply) => {
-      const page = Math.max(parseInt(request.query.page ?? "1", 10) || 1, 1);
       const limit = Math.min(Math.max(parseInt(request.query.limit ?? "20", 10) || 20, 1), 100);
-      const skip = (page - 1) * limit;
 
       const where = {
         schoolId: request.schoolId,
         ...(request.query.status ? { status: request.query.status.toLowerCase() as any } : {}),
       };
 
+      const cursorArgs = request.query.cursor
+        ? { cursor: { id: request.query.cursor }, skip: 1 }
+        : {};
+
       const items = await prisma.legacyPayment.findMany({
         where,
         orderBy: { createdAt: "desc" },
-        skip,
-        take: limit,
+        take: limit + 1,
+        ...cursorArgs,
       });
 
-      return sendSuccess(request, reply, items);
+      const hasMore = items.length > limit;
+      const data = hasMore ? items.slice(0, limit) : items;
+      const nextCursor = data.length > 0 ? data[data.length - 1].id : null;
+
+      return sendSuccess(request, reply, {
+        data,
+        pagination: { cursor: nextCursor, hasMore },
+      });
     }
   );
 
@@ -222,7 +231,7 @@ export default async function paymentRoutes(server: FastifyInstance) {
   server.post(
     "/payments",
     {
-      preHandler: [authenticate, tenantGuard],
+      preHandler: [authenticate, tenantGuard, roleMiddleware(["Admin", "SuperAdmin", "Accountant"])],
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const parsed = recordPaymentSchema.safeParse(request.body);

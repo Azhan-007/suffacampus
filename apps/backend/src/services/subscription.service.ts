@@ -29,7 +29,26 @@ const VALID_TRANSITIONS: Record<SubStatus, SubStatus[]> = {
 };
 
 /**
+ * Allowlist of School model fields safe to update during subscription transitions.
+ * Prevents mass assignment of unrelated fields via metadata.
+ */
+const SUBSCRIPTION_SAFE_FIELDS = [
+  "subscriptionPlan",
+  "currentPeriodStart",
+  "currentPeriodEnd",
+  "autoRenew",
+  "paymentFailureCount",
+  "cancelledAt",
+  "cancelEffectiveDate",
+  "expiredReason",
+  "overdueReason",
+] as const;
+
+/**
  * Attempt to transition a school's subscription status.
+ * Uses optimistic locking — the update only succeeds if
+ * the current status still matches what we read, preventing
+ * race conditions between concurrent webhooks.
  */
 export async function transitionStatus(
   schoolId: string,
@@ -50,18 +69,38 @@ export async function transitionStatus(
     return false;
   }
 
-  await prisma.school.update({
-    where: { id: schoolId },
-    data: {
-      subscriptionStatus: newStatus as any,
-      ...metadata,
+  // Build safe update payload — never spread raw metadata
+  const safeData: Record<string, unknown> = {
+    subscriptionStatus: newStatus,
+  };
+  for (const key of SUBSCRIPTION_SAFE_FIELDS) {
+    if (key in metadata && metadata[key] !== undefined) {
+      safeData[key] = metadata[key];
+    }
+  }
+
+  // Optimistic lock: only update if status hasn't changed since we read it
+  const result = await prisma.school.updateMany({
+    where: {
+      id: schoolId,
+      subscriptionStatus: currentStatus, // ← optimistic lock
     },
+    data: safeData,
   });
+
+  if (result.count === 0) {
+    log.warn(
+      { schoolId, currentStatus, newStatus },
+      "Subscription transition lost to concurrent update (optimistic lock)"
+    );
+    return false;
+  }
 
   await writeAuditLog("SUBSCRIPTION_STATUS_CHANGE", performedBy, schoolId, {
     from: currentStatus,
     to: newStatus,
-    ...metadata,
+    reason: metadata?.reason,
+    plan: metadata?.plan,
   });
 
   return true;

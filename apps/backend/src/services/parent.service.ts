@@ -88,6 +88,14 @@ export async function redeemParentInvite(
   const user = await prisma.user.findUnique({ where: { uid: parentUid } });
   if (!user) throw Errors.notFound("User", parentUid);
 
+  // Cross-tenant guard — if user already belongs to a school, the invite
+  // must be for the SAME school. Prevents cross-tenant student binding.
+  if (user.schoolId && user.schoolId !== invite.schoolId) {
+    throw Errors.badRequest(
+      "Invite belongs to a different school. You cannot link students across schools."
+    );
+  }
+
   const existingIds: string[] = (user.studentIds as string[]) ?? [];
   if (existingIds.includes(invite.studentId)) {
     throw Errors.conflict("Student is already linked to your account");
@@ -157,51 +165,65 @@ export async function getChildrenSummaries(
     where: { id: { in: studentIds }, schoolId },
   });
 
+  if (students.length === 0) return [];
+
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const ids = students.map((s) => s.id);
 
-  const summaries: ChildSummary[] = [];
-
-  for (const s of students) {
-    // Attendance rate (last 30 days)
-    const [totalAttendance, presentCount] = await Promise.all([
-      prisma.attendance.count({
-        where: { schoolId, studentId: s.id, date: { gte: thirtyDaysAgo } },
-      }),
-      prisma.attendance.count({
-        where: {
-          schoolId,
-          studentId: s.id,
-          date: { gte: thirtyDaysAgo },
-          status: { in: ["Present", "Late"] },
-        },
-      }),
-    ]);
-
-    const attendanceRate =
-      totalAttendance > 0 ? Math.round((presentCount / totalAttendance) * 100) : null;
-
-    // Pending fees
-    const pendingFeeRows = await prisma.fee.findMany({
+  // Batch all queries instead of N+1 per student
+  const [totalAttGroups, presentAttGroups, pendingFeeGroups, latestResults] = await Promise.all([
+    // 1. Total attendance per student (last 30 days)
+    prisma.attendance.groupBy({
+      by: ["studentId"],
+      where: { schoolId, studentId: { in: ids }, date: { gte: thirtyDaysAgo } },
+      _count: true,
+    }),
+    // 2. Present/Late attendance per student (last 30 days)
+    prisma.attendance.groupBy({
+      by: ["studentId"],
       where: {
         schoolId,
-        studentId: s.id,
-        status: { in: ["Pending", "Overdue"] },
+        studentId: { in: ids },
+        date: { gte: thirtyDaysAgo },
+        status: { in: ["Present", "Late"] },
       },
-      select: { amount: true },
-    });
-
-    let pendingFeesMoney = moneyFrom(null, 0);
-    for (const feeRow of pendingFeeRows) {
-      pendingFeesMoney = pendingFeesMoney.plus(moneyFrom(feeRow.amount));
-    }
-
-    // Last exam result
-    const lastResult = await prisma.result.findFirst({
-      where: { schoolId, studentId: s.id, isActive: true },
+      _count: true,
+    }),
+    // 3. Pending fee sums per student
+    prisma.fee.groupBy({
+      by: ["studentId"],
+      where: {
+        schoolId,
+        studentId: { in: ids },
+        status: { in: ["Pending", "Overdue"] as any },
+      },
+      _sum: { amount: true },
+    }),
+    // 4. Latest result per student (bounded query — max 1 per student)
+    prisma.result.findMany({
+      where: { schoolId, studentId: { in: ids }, isActive: true },
       orderBy: { createdAt: "desc" },
-    });
+      distinct: ["studentId"],
+      select: { studentId: true, marksObtained: true, totalMarks: true },
+    }),
+  ]);
 
-    summaries.push({
+  // Build lookup maps for O(1) access
+  const totalAttMap = new Map(totalAttGroups.map((g) => [g.studentId, g._count]));
+  const presentAttMap = new Map(presentAttGroups.map((g) => [g.studentId, g._count]));
+  const pendingFeeMap = new Map(
+    pendingFeeGroups.map((g) => [g.studentId, moneyToNumber(moneyFrom(g._sum.amount))])
+  );
+  const resultMap = new Map(
+    latestResults.map((r) => [r.studentId, `${r.marksObtained}/${r.totalMarks}`])
+  );
+
+  return students.map((s) => {
+    const totalAtt = totalAttMap.get(s.id) ?? 0;
+    const presentAtt = presentAttMap.get(s.id) ?? 0;
+    const attendanceRate = totalAtt > 0 ? Math.round((presentAtt / totalAtt) * 100) : null;
+
+    return {
       studentId: s.id,
       name: `${s.firstName} ${s.lastName}`,
       class: s.classId ?? "",
@@ -209,14 +231,10 @@ export async function getChildrenSummaries(
       rollNumber: s.rollNumber ?? "",
       photoURL: s.photoURL,
       attendanceRate,
-      pendingFees: moneyToNumber(pendingFeesMoney),
-      lastExamScore: lastResult
-        ? `${lastResult.marksObtained}/${lastResult.totalMarks}`
-        : null,
-    });
-  }
-
-  return summaries;
+      pendingFees: pendingFeeMap.get(s.id) ?? 0,
+      lastExamScore: resultMap.get(s.id) ?? null,
+    };
+  });
 }
 
 export async function getStudentAttendanceForParent(

@@ -13,6 +13,8 @@ export interface OfflineMutation {
   createdAt: string;
   attempts: number;
   nextRetryAt: number;
+  /** Optional dedup key. If a queued item with the same key exists, it is replaced. */
+  dedupKey?: string;
 }
 
 function makeMutationId(): string {
@@ -55,8 +57,15 @@ export async function enqueueOfflineMutation(input: {
   path: string;
   method: QueueableMethod;
   body?: unknown;
+  /**
+   * Optional deduplication key. If a queued item with the same dedupKey
+   * already exists, it is replaced instead of creating a duplicate.
+   * Use for idempotent mutations like attendance upserts.
+   */
+  dedupKey?: string;
 }): Promise<string> {
-  const queue = await readQueue();
+  let queue = await readQueue();
+
   const entry: OfflineMutation = {
     id: makeMutationId(),
     path: input.path,
@@ -65,7 +74,13 @@ export async function enqueueOfflineMutation(input: {
     createdAt: new Date().toISOString(),
     attempts: 0,
     nextRetryAt: Date.now(),
+    dedupKey: input.dedupKey,
   };
+
+  // Replace existing entry with same dedup key (prevents queue bloat)
+  if (input.dedupKey) {
+    queue = queue.filter((item) => item.dedupKey !== input.dedupKey);
+  }
 
   queue.push(entry);
   await writeQueue(queue);
@@ -75,6 +90,13 @@ export async function enqueueOfflineMutation(input: {
 export async function getOfflineQueueSize(): Promise<number> {
   const queue = await readQueue();
   return queue.length;
+}
+
+/** Quick check — avoids parsing the full JSON when only checking emptiness. */
+export async function isQueueEmpty(): Promise<boolean> {
+  const raw = await AsyncStorage.getItem(OFFLINE_QUEUE_KEY);
+  if (!raw || raw === "[]" || raw.trim().length === 0) return true;
+  return false;
 }
 
 /**

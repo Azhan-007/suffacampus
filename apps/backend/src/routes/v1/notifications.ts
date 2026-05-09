@@ -21,6 +21,7 @@ import { createNotificationSchema } from "../../schemas/notification.schema";
 
 const listNotificationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
+  cursor: z.string().min(1).optional(),
   unreadOnly: z.coerce.boolean().optional(),
 });
 
@@ -96,19 +97,21 @@ export default async function notificationRoutes(server: FastifyInstance) {
       }
 
       const context = getContext(request);
-      const notifications = await getNotificationsForUser(context);
+      const limit = queryParsed.data.limit ?? 50;
+      const result = await getNotificationsForUser(context, {
+        limit,
+        cursor: queryParsed.data.cursor,
+      });
 
       const unreadOnly = queryParsed.data.unreadOnly ?? false;
       const filtered = unreadOnly
-        ? notifications.filter((item) => !item.isRead)
-        : notifications;
-
-      const limit = queryParsed.data.limit ?? 50;
-      const data = filtered.slice(0, limit);
+        ? result.data.filter((item) => !item.isRead)
+        : result.data;
 
       return sendSuccess(request, reply, {
-        notifications: data,
-        count: data.length,
+        notifications: filtered,
+        count: filtered.length,
+        pagination: result.pagination,
       });
     }
   );

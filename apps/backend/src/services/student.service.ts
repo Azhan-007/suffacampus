@@ -201,8 +201,49 @@ export async function createStudent(
   const student = await prisma.student.create({
     data: {
       schoolId,
-      ...data,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      classId: data.classId,
+      sectionId: data.sectionId,
+      rollNumber: data.rollNumber,
+      parentPhone: data.parentPhone,
       gender: data.gender as any,
+      photoURL: data.photoURL,
+      email: data.email,
+      phone: data.phone,
+      alternatePhone: data.alternatePhone,
+      dateOfBirth: data.dateOfBirth,
+      bloodGroup: data.bloodGroup,
+      nationality: data.nationality,
+      religion: data.religion,
+      address: data.address,
+      city: data.city,
+      state: data.state,
+      postalCode: data.postalCode,
+      emergencyContact: data.emergencyContact,
+      emergencyContactName: data.emergencyContactName,
+      emergencyRelation: data.emergencyRelation,
+      medicalConditions: data.medicalConditions,
+      allergies: data.allergies,
+      previousSchool: data.previousSchool,
+      admissionDate: data.admissionDate,
+      fatherName: data.fatherName,
+      fatherPhone: data.fatherPhone,
+      fatherEmail: data.fatherEmail,
+      fatherOccupation: data.fatherOccupation,
+      fatherWorkplace: data.fatherWorkplace,
+      motherName: data.motherName,
+      motherPhone: data.motherPhone,
+      motherEmail: data.motherEmail,
+      motherOccupation: data.motherOccupation,
+      motherWorkplace: data.motherWorkplace,
+      guardianName: data.guardianName,
+      guardianRelation: data.guardianRelation,
+      guardianPhone: data.guardianPhone,
+      guardianEmail: data.guardianEmail,
+      parentEmail: data.parentEmail,
+      enrollmentDate: data.enrollmentDate,
+      isActive: data.isActive,
       isDeleted: false,
     },
   });
@@ -341,9 +382,55 @@ export async function updateStudent(
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
   if (existing.isDeleted) throw Errors.notFound("Student", studentId);
 
+  // Explicit field mapping — never spread raw input into Prisma
+  const safeUpdate: Record<string, unknown> = {};
+  if (data.firstName !== undefined) safeUpdate.firstName = data.firstName;
+  if (data.lastName !== undefined) safeUpdate.lastName = data.lastName;
+  if (data.classId !== undefined) safeUpdate.classId = data.classId;
+  if (data.sectionId !== undefined) safeUpdate.sectionId = data.sectionId;
+  if (data.rollNumber !== undefined) safeUpdate.rollNumber = data.rollNumber;
+  if (data.parentPhone !== undefined) safeUpdate.parentPhone = data.parentPhone;
+  if (data.gender !== undefined) safeUpdate.gender = data.gender;
+  if (data.photoURL !== undefined) safeUpdate.photoURL = data.photoURL;
+  if (data.email !== undefined) safeUpdate.email = data.email;
+  if (data.phone !== undefined) safeUpdate.phone = data.phone;
+  if (data.alternatePhone !== undefined) safeUpdate.alternatePhone = data.alternatePhone;
+  if (data.dateOfBirth !== undefined) safeUpdate.dateOfBirth = data.dateOfBirth;
+  if (data.bloodGroup !== undefined) safeUpdate.bloodGroup = data.bloodGroup;
+  if (data.nationality !== undefined) safeUpdate.nationality = data.nationality;
+  if (data.religion !== undefined) safeUpdate.religion = data.religion;
+  if (data.address !== undefined) safeUpdate.address = data.address;
+  if (data.city !== undefined) safeUpdate.city = data.city;
+  if (data.state !== undefined) safeUpdate.state = data.state;
+  if (data.postalCode !== undefined) safeUpdate.postalCode = data.postalCode;
+  if (data.emergencyContact !== undefined) safeUpdate.emergencyContact = data.emergencyContact;
+  if (data.emergencyContactName !== undefined) safeUpdate.emergencyContactName = data.emergencyContactName;
+  if (data.emergencyRelation !== undefined) safeUpdate.emergencyRelation = data.emergencyRelation;
+  if (data.medicalConditions !== undefined) safeUpdate.medicalConditions = data.medicalConditions;
+  if (data.allergies !== undefined) safeUpdate.allergies = data.allergies;
+  if (data.previousSchool !== undefined) safeUpdate.previousSchool = data.previousSchool;
+  if (data.admissionDate !== undefined) safeUpdate.admissionDate = data.admissionDate;
+  if (data.fatherName !== undefined) safeUpdate.fatherName = data.fatherName;
+  if (data.fatherPhone !== undefined) safeUpdate.fatherPhone = data.fatherPhone;
+  if (data.fatherEmail !== undefined) safeUpdate.fatherEmail = data.fatherEmail;
+  if (data.fatherOccupation !== undefined) safeUpdate.fatherOccupation = data.fatherOccupation;
+  if (data.fatherWorkplace !== undefined) safeUpdate.fatherWorkplace = data.fatherWorkplace;
+  if (data.motherName !== undefined) safeUpdate.motherName = data.motherName;
+  if (data.motherPhone !== undefined) safeUpdate.motherPhone = data.motherPhone;
+  if (data.motherEmail !== undefined) safeUpdate.motherEmail = data.motherEmail;
+  if (data.motherOccupation !== undefined) safeUpdate.motherOccupation = data.motherOccupation;
+  if (data.motherWorkplace !== undefined) safeUpdate.motherWorkplace = data.motherWorkplace;
+  if (data.guardianName !== undefined) safeUpdate.guardianName = data.guardianName;
+  if (data.guardianRelation !== undefined) safeUpdate.guardianRelation = data.guardianRelation;
+  if (data.guardianPhone !== undefined) safeUpdate.guardianPhone = data.guardianPhone;
+  if (data.guardianEmail !== undefined) safeUpdate.guardianEmail = data.guardianEmail;
+  if (data.parentEmail !== undefined) safeUpdate.parentEmail = data.parentEmail;
+  if (data.enrollmentDate !== undefined) safeUpdate.enrollmentDate = data.enrollmentDate;
+  if (data.isActive !== undefined) safeUpdate.isActive = data.isActive;
+
   const updated = await prisma.student.update({
     where: { id: studentId },
-    data: { ...data, gender: data.gender as any },
+    data: safeUpdate,
   });
 
   await writeAuditLog("UPDATE_STUDENT", performedBy, schoolId, {

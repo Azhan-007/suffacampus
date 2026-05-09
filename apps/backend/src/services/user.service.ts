@@ -137,9 +137,17 @@ export async function updateUser(
     await auth.setCustomUserClaims(uid, { role: data.role, schoolId });
   }
 
+  // Explicit field mapping — never spread raw input into Prisma
+  const safeUpdate: Record<string, unknown> = {};
+  if (data.displayName !== undefined) safeUpdate.displayName = data.displayName;
+  if (data.role !== undefined) safeUpdate.role = data.role;
+  if (data.phone !== undefined) safeUpdate.phone = data.phone;
+  if (data.photoURL !== undefined) safeUpdate.photoURL = data.photoURL;
+  if (data.isActive !== undefined) safeUpdate.isActive = data.isActive;
+
   const result = await prisma.user.updateMany({
     where: { uid, schoolId },
-    data: { ...data, role: data.role as any },
+    data: safeUpdate,
   });
 
   if (result.count === 0) {

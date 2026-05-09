@@ -5,6 +5,7 @@ import {
   processExpiredGrace,
 } from "../services/subscription.service";
 import { processOverdueFeeNotifications } from "../services/overdue-fee-notification.service";
+import { executeReportById } from "../services/report.service";
 import { prisma } from "../lib/prisma";
 import { trackError } from "../services/error-tracking.service";
 import {
@@ -14,6 +15,7 @@ import {
 import { enqueueEmail, initEmailQueue, shutdownEmailQueue } from "../services/email-queue.service";
 import { createLogger } from "../utils/logger";
 import { assertSchoolScope } from "../lib/tenant-scope";
+import { setReportQueueBacklog } from "../plugins/metrics";
 
 const log = createLogger("workers");
 
@@ -100,13 +102,20 @@ export function startWorkers(): void {
 
   // ── Overdue Fee Notifications ─────────────────────────────────────────
   // Every day at 8:00 AM
+  let overdueFeeRunning = false;
   tasks.push(cron.schedule("0 8 * * *", async () => {
+    if (overdueFeeRunning) {
+      log.warn("[workers] Skipped overdue fee notifications — previous run still active");
+      return;
+    }
+
     const today = new Date().toISOString().split("T")[0];
     if (lastOverdueFeeRunDate === today) {
       log.info({ date: today }, "[workers] Skipped overdue fee notifications (already ran today)");
       return;
     }
 
+    overdueFeeRunning = true;
     try {
       const result = await processOverdueFeeNotifications();
       lastOverdueFeeRunDate = today;
@@ -120,6 +129,8 @@ export function startWorkers(): void {
     } catch (err) {
       log.error({ err }, "Overdue fee notification worker failed");
       trackError({ error: err, metadata: { context: "worker:overdue-fee-notifications" } });
+    } finally {
+      overdueFeeRunning = false;
     }
   }));
 
@@ -142,6 +153,110 @@ export function startWorkers(): void {
     } catch (err) {
       log.error({ err }, "Usage limit warning worker failed");
       trackError({ error: err, metadata: { context: "worker:usage-limits" } });
+    }
+  }));
+
+  // ── Pending Report Processing ─────────────────────────────────────────
+  // Every 30 seconds — pick up and process enqueued reports
+  tasks.push(cron.schedule("*/1 * * * *", async () => {
+    try {
+      await processPendingReports();
+    } catch (err) {
+      log.error({ err }, "Report processing worker failed");
+      trackError({ error: err, metadata: { context: "worker:report-processing" } });
+    }
+  }));
+
+  // ── WebhookEvent Cleanup ──────────────────────────────────────────────
+  // Every day at 3:00 AM — delete processed webhook events older than 30 days
+  tasks.push(cron.schedule("0 3 * * *", async () => {
+    try {
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const result = await prisma.webhookEvent.deleteMany({
+        where: { processedAt: { lt: cutoff } },
+      });
+      if (result.count > 0) {
+        log.info(`[workers] Cleaned up ${result.count} old webhook event(s)`);
+      }
+    } catch (err) {
+      log.error({ err }, "Webhook event cleanup worker failed");
+      trackError({ error: err, metadata: { context: "worker:webhook-cleanup" } });
+    }
+  }));
+
+  // ── Data Retention Cleanup ────────────────────────────────────────────
+  // Every day at 3:30 AM — purge old records from high-growth tables.
+  // Each operation is independent; one failure does not block others.
+  tasks.push(cron.schedule("30 3 * * *", async () => {
+    const results: string[] = [];
+
+    // 1. AuditLog — 90-day retention
+    try {
+      const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const r = await prisma.auditLog.deleteMany({
+        where: { createdAt: { lt: cutoff } },
+      });
+      if (r.count > 0) results.push(`auditLog:${r.count}`);
+    } catch (err) {
+      log.error({ err }, "Retention cleanup failed: auditLog");
+      trackError({ error: err, metadata: { context: "worker:retention:auditLog" } });
+    }
+
+    // 2. ErrorLog — 30-day retention
+    try {
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const r = await prisma.errorLog.deleteMany({
+        where: { createdAt: { lt: cutoff } },
+      });
+      if (r.count > 0) results.push(`errorLog:${r.count}`);
+    } catch (err) {
+      log.error({ err }, "Retention cleanup failed: errorLog");
+      trackError({ error: err, metadata: { context: "worker:retention:errorLog" } });
+    }
+
+    // 3. WebhookFailure — 60-day retention (resolved only)
+    try {
+      const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+      const r = await prisma.webhookFailure.deleteMany({
+        where: { status: "resolved", resolvedAt: { lt: cutoff } },
+      });
+      if (r.count > 0) results.push(`webhookFailure:${r.count}`);
+    } catch (err) {
+      log.error({ err }, "Retention cleanup failed: webhookFailure");
+      trackError({ error: err, metadata: { context: "worker:retention:webhookFailure" } });
+    }
+
+    // 4. Report — 90-day HTML purge (keep metadata + stats)
+    try {
+      const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const r = await prisma.report.updateMany({
+        where: {
+          status: "completed",
+          generatedAt: { lt: cutoff },
+          html: { not: "" },
+        },
+        data: { html: "" },
+      });
+      if (r.count > 0) results.push(`reportHtmlPurge:${r.count}`);
+    } catch (err) {
+      log.error({ err }, "Retention cleanup failed: report HTML");
+      trackError({ error: err, metadata: { context: "worker:retention:reportHtml" } });
+    }
+
+    // 5. Notification — 90-day retention (cascade deletes reads + deliveries)
+    try {
+      const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const r = await prisma.notification.deleteMany({
+        where: { createdAt: { lt: cutoff } },
+      });
+      if (r.count > 0) results.push(`notification:${r.count}`);
+    } catch (err) {
+      log.error({ err }, "Retention cleanup failed: notification");
+      trackError({ error: err, metadata: { context: "worker:retention:notification" } });
+    }
+
+    if (results.length > 0) {
+      log.info({ cleaned: results }, "[workers] Data retention cleanup completed");
     }
   }));
 
@@ -304,35 +419,38 @@ async function sendUsageLimitWarnings(): Promise<void> {
     },
   });
 
+  if (schools.length === 0) return;
+
+  // Batch: 2 groupBy queries total instead of 2 count queries per school
+  const schoolIds = schools.map((s) => s.id);
+
+  const [studentCounts, teacherCounts] = await Promise.all([
+    prisma.student.groupBy({
+      by: ["schoolId"],
+      where: { schoolId: { in: schoolIds }, isDeleted: false },
+      _count: true,
+    }),
+    prisma.teacher.groupBy({
+      by: ["schoolId"],
+      where: { schoolId: { in: schoolIds }, isDeleted: false },
+      _count: true,
+    }),
+  ]);
+
+  const studentMap = new Map(studentCounts.map((r) => [r.schoolId, r._count]));
+  const teacherMap = new Map(teacherCounts.map((r) => [r.schoolId, r._count]));
+
   let sent = 0;
 
   for (const school of schools) {
-    assertSchoolScope(school.id);
-
     const schoolName = school.name ?? "School";
     const adminEmail = school.email;
 
     if (!adminEmail) continue;
 
-    // Count current usage
-    const [studentCount, teacherCount] = await Promise.all([
-      prisma.student.count({
-        where: {
-          schoolId: school.id,
-          isDeleted: false,
-        },
-      }),
-      prisma.teacher.count({
-        where: {
-          schoolId: school.id,
-          isDeleted: false,
-        },
-      }),
-    ]);
-
     const checks = [
-      { resource: "Students", current: studentCount, limit: school.maxStudents },
-      { resource: "Teachers", current: teacherCount, limit: school.maxTeachers },
+      { resource: "Students", current: studentMap.get(school.id) ?? 0, limit: school.maxStudents },
+      { resource: "Teachers", current: teacherMap.get(school.id) ?? 0, limit: school.maxTeachers },
     ];
 
     for (const check of checks) {
@@ -359,5 +477,58 @@ async function sendUsageLimitWarnings(): Promise<void> {
 
   if (sent > 0) {
     log.info(`[workers] Sent ${sent} usage limit warning(s)`);
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Report generation worker
+// ---------------------------------------------------------------------------
+
+/**
+ * Process pending reports created by enqueueReport().
+ * Picks up to 5 reports per cycle, processes sequentially.
+ * Also recovers stuck reports (in "processing" for > 10 min).
+ */
+const REPORT_BATCH_SIZE = 10;
+const REPORT_STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+async function processPendingReports(): Promise<void> {
+  const cutoff = new Date(Date.now() - REPORT_STUCK_THRESHOLD_MS);
+
+  // Find pending reports + stuck "processing" reports
+  const reports = await prisma.report.findMany({
+    where: {
+      OR: [
+        { status: "pending" },
+        { status: "processing", createdAt: { lt: cutoff } },
+      ],
+    },
+    orderBy: { createdAt: "asc" },
+    take: REPORT_BATCH_SIZE,
+    select: { id: true, schoolId: true, type: true },
+  });
+
+  if (reports.length === 0) {
+    setReportQueueBacklog(0);
+    return;
+  }
+
+  setReportQueueBacklog(reports.length);
+
+  for (const report of reports) {
+    try {
+      await executeReportById(report.id);
+      log.info(
+        { reportId: report.id, schoolId: report.schoolId, type: report.type },
+        "[workers] Report processed"
+      );
+    } catch (err) {
+      log.error(
+        { err, reportId: report.id },
+        "[workers] Report processing failed"
+      );
+      trackError({ error: err, metadata: { context: "worker:report-processing", reportId: report.id } });
+    }
   }
 }

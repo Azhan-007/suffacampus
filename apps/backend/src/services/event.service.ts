@@ -111,9 +111,22 @@ export async function updateEvent(
   if (existing.schoolId !== schoolId) throw Errors.tenantMismatch();
   if (!existing.isActive) throw Errors.notFound("Event", eventId);
 
+  // Explicit field mapping — never spread raw input into Prisma
+  const safeUpdate: Record<string, unknown> = {};
+  if (data.title !== undefined) safeUpdate.title = data.title;
+  if (data.description !== undefined) safeUpdate.description = data.description;
+  if (data.eventDate !== undefined) safeUpdate.eventDate = data.eventDate;
+  if (data.endDate !== undefined) safeUpdate.endDate = data.endDate;
+  if (data.eventType !== undefined) safeUpdate.eventType = data.eventType;
+  if (data.targetAudience !== undefined) safeUpdate.targetAudience = data.targetAudience;
+  if (data.location !== undefined) safeUpdate.location = data.location;
+  if (data.organizer !== undefined) safeUpdate.organizer = data.organizer;
+  if (data.imageURL !== undefined) safeUpdate.imageURL = data.imageURL;
+  if (data.isActive !== undefined) safeUpdate.isActive = data.isActive;
+
   const updated = await prisma.event.update({
     where: { id: eventId },
-    data: { ...data, eventType: data.eventType as any },
+    data: safeUpdate,
   });
 
   await writeAuditLog("UPDATE_EVENT", performedBy, schoolId, {

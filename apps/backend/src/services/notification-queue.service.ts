@@ -14,6 +14,7 @@ import {
 } from "./push-notification.service";
 import { getNotificationQueue, getNotificationQueueConnection } from "./queue";
 import { assertSchoolScope } from "../lib/tenant-scope";
+import { recordRedisFallback } from "../plugins/metrics";
 
 const log = pino({ name: "notification-queue" });
 
@@ -315,6 +316,7 @@ export async function enqueueNotificationJob(data: NotificationJobData): Promise
       { notificationId: data.notificationId },
       "REDIS_URL not set - processing notification inline"
     );
+    recordRedisFallback("notification");
 
     await processNotificationJob(data);
     return data.notificationId;
@@ -326,6 +328,7 @@ export async function enqueueNotificationJob(data: NotificationJobData): Promise
       { notificationId: data.notificationId },
       "Notification queue unavailable - processing notification inline"
     );
+    recordRedisFallback("notification");
 
     await processNotificationJob(data);
     return data.notificationId;

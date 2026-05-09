@@ -9,6 +9,10 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  AZURE_APP_NAME: suffacampus-api-azhan
+  NODE_VERSION: '22.x'
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -22,13 +26,19 @@ jobs:
       - name: Set up Node.js version
         uses: actions/setup-node@v3
         with:
-          node-version: '22.x'
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install and build
+      - name: Install dependencies
         working-directory: apps/backend
-        run: |
-          npm ci
-          npm run build
+        run: npm ci
+
+      - name: Type check
+        working-directory: apps/backend
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: apps/backend
+        run: npm run build
 
       - name: Run database migrations
         working-directory: apps/backend
@@ -55,6 +65,41 @@ jobs:
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'suffacampus-api-azhan'
+          app-name: ${{ env.AZURE_APP_NAME }}
           slot-name: 'Production'
           package: deploy.zip
+
+      # ── Post-deploy health check ──────────────────────────────────────
+      # Waits up to 60s for the instance to become healthy after restart.
+      # Catches deployment failures that would otherwise go unnoticed.
+      - name: Verify deployment health
+        run: |
+          echo "Waiting 15s for app to restart..."
+          sleep 15
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://${{ env.AZURE_APP_NAME }}.azurewebsites.net/health/live" || true)
+            echo "Health check attempt $i: HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Deployment healthy"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "❌ Health check failed after 5 attempts"
+          exit 1
+
+      # ── Staging slot swap (activate when staging slot is created) ─────
+      # To enable zero-downtime deploys:
+      #   1. Create a staging slot in Azure Portal for this App Service
+      #   2. Change slot-name above from 'Production' to 'staging'
+      #   3. Uncomment the swap step below
+      #
+      # - name: Swap staging to production
+      #   uses: azure/CLI@v1
+      #   with:
+      #     inlineScript: |
+      #       az webapp deployment slot swap \
+      #         --name ${{ env.AZURE_APP_NAME }} \
+      #         --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+      #         --slot staging \
+      #         --target-slot production

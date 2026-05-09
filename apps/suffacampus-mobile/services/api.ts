@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { auth } from "../firebase";
-import Constants from "expo-constants";
+import { BASE_URL } from "../config/env";
 
 // ─── Timeout + Retry Config ─────────────────────────────────────────────────
 
@@ -8,7 +8,6 @@ const DEFAULT_TIMEOUT_MS = 15_000; // 15 seconds
 const MAX_RETRIES = 1;
 const RETRY_BASE_MS = 500;
 const RETRYABLE_STATUSES = new Set([408, 502, 503, 504]);
-const DEFAULT_TESTING_API_URL = "https://suffacampus-api-azhan.azurewebsites.net/api/v1";
 const SESSION_TOKEN_STORAGE_KEY = "SuffaCampus-session-access-token";
 const SESSION_TOKEN_UID_STORAGE_KEY = "SuffaCampus-session-access-token-uid";
 
@@ -80,17 +79,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Resolve API base URL in this priority:
- *  1. EXPO_PUBLIC_API_URL env variable (set in .env or app.json extra)
- *  2. Temporary Render testing fallback
- *
- * The URL MUST include the /api/v1 prefix — all backend routes live there.
- */
-export const BASE_URL: string =
-  (Constants.expoConfig?.extra?.apiUrl as string) ??
-  process.env.EXPO_PUBLIC_API_URL ??
-  DEFAULT_TESTING_API_URL;
+// Re-export BASE_URL from centralized env config.
+// The URL includes the /api/v1 prefix — all backend routes live there.
+// Validated at startup; app crashes if EXPO_PUBLIC_API_URL is missing.
+export { BASE_URL };
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -225,8 +217,8 @@ async function bootstrapSessionAccessToken(
         },
         body: JSON.stringify({}),
       },
-      2,      // More retries — Render cold starts can fail the first attempt
-      45_000  // 45s timeout — Render free tier can take 30-60s to wake up
+      2,      // Extra retries — cold starts on PaaS platforms can fail the first attempt
+      45_000  // 45s timeout — PaaS cold starts may take 30-60s
     );
 
     if (!response.ok) {

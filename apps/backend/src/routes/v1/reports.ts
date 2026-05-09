@@ -6,7 +6,7 @@ import {
   exportsRateLimitProfile,
 } from "../../plugins/rateLimit";
 import { prisma } from "../../lib/prisma";
-import { generateReport, ReportType } from "../../services/report.service";
+import { enqueueReport, type ReportType } from "../../services/report.service";
 import { sendSuccess } from "../../utils/response";
 import { Errors } from "../../errors";
 import { z } from "zod";
@@ -88,11 +88,13 @@ export default async function reportRoutes(server: FastifyInstance) {
           },
           _count: { _all: true },
         }),
-        prisma.studentFee.aggregate({
+        // Use Fee model (same as dashboard.service.ts) to avoid
+        // contradictory financial totals between dashboard and reports
+        prisma.fee.aggregate({
           where: { schoolId },
           _sum: {
-            totalAmount: true,
-            paidAmount: true,
+            amount: true,
+            amountPaid: true,
           },
         }),
       ]);
@@ -109,8 +111,8 @@ export default async function reportRoutes(server: FastifyInstance) {
         if (row.status === AttendanceStatus.Late) attendance.late = row._count._all;
       }
 
-      const total = moneyToNumber(feeTotals._sum.totalAmount);
-      const collected = moneyToNumber(feeTotals._sum.paidAmount);
+      const total = moneyToNumber(feeTotals._sum.amount);
+      const collected = moneyToNumber(feeTotals._sum.amountPaid);
       const pending = total - collected;
 
       return sendSuccess(request, reply, {
@@ -149,7 +151,10 @@ export default async function reportRoutes(server: FastifyInstance) {
       }
       const userId = request.user!.uid;
 
-      const result = await generateReport({
+      // Enqueue for background processing instead of blocking the request.
+      // The worker (processPendingReports, runs every 60s) picks it up.
+      // Clients poll GET /reports/:id for completion.
+      const result = await enqueueReport({
         schoolId,
         type: parsed.data.type as ReportType,
         startDate: parsed.data.startDate,
@@ -161,12 +166,7 @@ export default async function reportRoutes(server: FastifyInstance) {
 
       return sendSuccess(request, reply, {
         id: result.id,
-        type: result.type,
-        stats: result.stats,
-        generatedAt: result.generatedAt,
-        deliveredTo: result.deliveredTo,
-        // HTML is large — only included when explicitly requested
-        html: result.html,
+        status: result.status,
       });
     }
   );

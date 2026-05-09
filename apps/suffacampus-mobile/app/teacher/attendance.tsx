@@ -16,13 +16,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useModalPortal } from "../../components/ModalPortal";
 import {
-    bulkMarkAttendance,
     getAttendanceByClassDate,
     getStudentsByClass,
-    upsertAttendance,
 } from "../../services/attendanceService";
 import { getMyProfile } from "../../services/authService";
 import { getClassSectionEntries, type ClassSectionEntry } from "../../services/classService";
+import { useOfflineAttendance } from "../../hooks/useOfflineAttendance";
+import { useNetworkSync } from "../../hooks/useNetworkSync";
 
 interface Student {
   id: string;
@@ -46,8 +46,20 @@ export default function AttendanceScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [showSaveToast, setShowSaveToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState("Saved!");
+  const [toastIsOffline, setToastIsOffline] = useState(false);
   const [selectedSession, setSelectedSession] = useState<"FN" | "AN">("FN");
   const toastAnimation = useRef(new Animated.Value(0)).current;
+
+  // ─── Offline-first hooks ──────────────────────────────────────────────────
+  const { isOnline, pendingCount, isSyncing, syncNow, refreshPendingCount } = useNetworkSync();
+  const { markSingle, markBulk, pendingCount: attendancePending, refreshPending } = useOfflineAttendance({
+    classId: selectedEntry?.classId ?? "",
+    sectionId: selectedEntry?.sectionName ?? "",
+    date: selectedDate,
+    session: selectedSession,
+    isOnline,
+  });
 
   useEffect(() => {
     (async () => {
@@ -129,11 +141,13 @@ export default function AttendanceScreen() {
     }
   };
 
-  const showSuccessToast = () => {
+  const showSuccessToast = (message = "Saved!", offline = false) => {
+    setToastMessage(message);
+    setToastIsOffline(offline);
     setShowSaveToast(true);
     Animated.sequence([
       Animated.timing(toastAnimation, { toValue: 1, duration: 200, useNativeDriver: true }),
-      Animated.delay(1200),
+      Animated.delay(offline ? 2000 : 1200),
       Animated.timing(toastAnimation, { toValue: 0, duration: 200, useNativeDriver: true }),
     ]).start(() => setShowSaveToast(false));
   };
@@ -143,21 +157,15 @@ export default function AttendanceScreen() {
     const student = students.find((s) => s.id === studentId);
     if (!student) return;
 
+    // Optimistic UI update
     setStudents(students.map((s) => (s.id === studentId ? { ...s, status } : s)));
 
-    try {
-      await upsertAttendance({
-        studentId: student.id,
-        classId: selectedEntry.classId,
-        sectionId: selectedEntry.sectionName,
-        date: selectedDate,
-        session: selectedSession,
-        status: status as "Present" | "Absent" | "Late" | "Excused",
-      });
-      showSuccessToast();
-    } catch (err) {
-      console.warn("Error marking attendance:", err);
-      Alert.alert("Error", "Failed to save attendance.");
+    const result = await markSingle(studentId, status);
+
+    if (result.synced) {
+      showSuccessToast("Saved!");
+    } else if (result.queued) {
+      showSuccessToast("Saved offline — will sync when connected", true);
     }
   };
 
@@ -204,27 +212,22 @@ export default function AttendanceScreen() {
           text: "Confirm",
           onPress: async () => {
             const studentsToMark = filterType === "all" ? students : filteredStudents;
+            // Optimistic UI update
             const updated = students.map((s) => {
               const shouldMark = studentsToMark.some(fs => fs.id === s.id);
               return shouldMark ? { ...s, status: status as Student["status"] } : s;
             });
             setStudents(updated);
 
-            try {
-              await bulkMarkAttendance({
-                classId: selectedEntry.classId,
-                sectionId: selectedEntry.sectionId,
-                date: selectedDate,
-                session: selectedSession,
-                entries: studentsToMark.map((s) => ({
-                  studentId: s.id,
-                  status,
-                })),
-              });
-              showSuccessToast();
-            } catch (err) {
-              console.warn("Error bulk marking attendance:", err);
-              Alert.alert("Error", "Failed to save bulk attendance. Please try again.");
+            const result = await markBulk(
+              studentsToMark.map((s) => s.id),
+              status
+            );
+
+            if (result.synced) {
+              showSuccessToast("Saved!");
+            } else if (result.queued) {
+              showSuccessToast("Saved offline — will sync when connected", true);
             }
           },
         },
@@ -234,6 +237,10 @@ export default function AttendanceScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    // Sync any pending offline items first
+    if (isOnline && pendingCount > 0) {
+      await syncNow();
+    }
     await fetchStudentsAndAttendance();
     setRefreshing(false);
   };
@@ -300,6 +307,23 @@ export default function AttendanceScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#4C6EF5"]} />}
         >
+          {/* Offline / Pending Sync Banner */}
+          {(!isOnline || pendingCount > 0) && (
+            <View style={[styles.syncBanner, !isOnline ? styles.syncBannerOffline : styles.syncBannerPending]}>
+              <MaterialCommunityIcons
+                name={!isOnline ? "wifi-off" : isSyncing ? "sync" : "cloud-upload-outline"}
+                size={16}
+                color={!isOnline ? "#FFF" : "#92400E"}
+              />
+              <Text style={[styles.syncBannerText, !isOnline && styles.syncBannerTextOffline]}>
+                {!isOnline
+                  ? "Offline — changes will sync when connected"
+                  : isSyncing
+                    ? "Syncing pending attendance..."
+                    : `${pendingCount} item${pendingCount !== 1 ? "s" : ""} pending sync`}
+              </Text>
+            </View>
+          )}
           {/* Class & Date Selector */}
           <View style={styles.selectorRow}>
             <TouchableOpacity style={styles.classSelector} onPress={openClassPicker}>
@@ -475,9 +499,17 @@ export default function AttendanceScreen() {
 
       {/* Toast */}
       {showSaveToast && (
-        <Animated.View style={[styles.toast, { opacity: toastAnimation }]}>
-          <MaterialCommunityIcons name="check-circle" size={18} color="#FFF" />
-          <Text style={styles.toastText}>Saved!</Text>
+        <Animated.View style={[
+          styles.toast,
+          { opacity: toastAnimation },
+          toastIsOffline && styles.toastOffline,
+        ]}>
+          <MaterialCommunityIcons
+            name={toastIsOffline ? "cloud-upload-outline" : "check-circle"}
+            size={18}
+            color="#FFF"
+          />
+          <Text style={styles.toastText}>{toastMessage}</Text>
         </Animated.View>
       )}
     </>
@@ -689,5 +721,33 @@ const styles = StyleSheet.create({
     gap: 6,
     elevation: 4,
   },
+  toastOffline: {
+    backgroundColor: "#D97706",
+  },
   toastText: { fontSize: 14, fontWeight: "600", color: "#FFF" },
+
+  syncBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+    gap: 8,
+  },
+  syncBannerOffline: {
+    backgroundColor: "#64748B",
+  },
+  syncBannerPending: {
+    backgroundColor: "#FEF3C7",
+  },
+  syncBannerText: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: "#92400E",
+    flex: 1,
+  },
+  syncBannerTextOffline: {
+    color: "#FFF",
+  },
 });

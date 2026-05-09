@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Prometheus-compatible metrics plugin.
  *
  * Exposes:
@@ -169,6 +169,81 @@ const queueOldestWaitingAgeSeconds = new Gauge({
   labelNames: ["queue"] as const,
   registers: [register],
 });
+
+// ---------------------------------------------------------------------------
+// Operational observability metrics (blind spot elimination)
+// ---------------------------------------------------------------------------
+
+const cacheOpsTotal = new Counter({
+  name: "SuffaCampus_cache_ops_total",
+  help: "Cache operations by result (hit, miss, error, disabled)",
+  labelNames: ["result"] as const,
+  registers: [register],
+});
+
+const auditWriteFailuresTotal = new Counter({
+  name: "SuffaCampus_audit_write_failures_total",
+  help: "Number of audit log writes that failed silently",
+  registers: [register],
+});
+
+const cronExecutionDuration = new Histogram({
+  name: "SuffaCampus_cron_execution_duration_seconds",
+  help: "Duration of cron job executions",
+  labelNames: ["job", "success"] as const,
+  buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 120, 300],
+  registers: [register],
+});
+
+const reportQueueBacklog = new Gauge({
+  name: "SuffaCampus_report_queue_backlog",
+  help: "Number of pending or stuck reports awaiting processing",
+  registers: [register],
+});
+
+const redisFallbackTotal = new Counter({
+  name: "SuffaCampus_redis_fallback_total",
+  help: "Times a service fell back to inline processing due to Redis unavailability",
+  labelNames: ["service"] as const,
+  registers: [register],
+});
+
+const singleflightCoalesceTotal = new Counter({
+  name: "SuffaCampus_singleflight_coalesce_total",
+  help: "Requests coalesced by singleflight (avoided redundant DB queries)",
+  labelNames: ["key"] as const,
+  registers: [register],
+});
+
+/** Record a cache operation result. */
+export function recordCacheOp(result: "hit" | "miss" | "error" | "disabled"): void {
+  cacheOpsTotal.inc({ result });
+}
+
+/** Record an audit log write failure. */
+export function recordAuditWriteFailure(): void {
+  auditWriteFailuresTotal.inc();
+}
+
+/** Record a cron job execution. */
+export function recordCronExecution(job: string, durationMs: number, success: boolean): void {
+  cronExecutionDuration.observe({ job, success: success ? "true" : "false" }, durationMs / 1000);
+}
+
+/** Set the current report queue backlog size. */
+export function setReportQueueBacklog(count: number): void {
+  reportQueueBacklog.set(count);
+}
+
+/** Record a Redis fallback activation. */
+export function recordRedisFallback(service: string): void {
+  redisFallbackTotal.inc({ service });
+}
+
+/** Record a singleflight coalesce. */
+export function recordSingleflightCoalesce(key: string): void {
+  singleflightCoalesceTotal.inc({ key });
+}
 
 async function refreshQueueMetrics() {
   const [emailStats, webhookRetryStats] = await Promise.all([

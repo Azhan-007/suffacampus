@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { apiKeyOrUserAuth } from "../../middleware/apiKey";
 import { exportsRateLimitProfile } from "../../plugins/rateLimit";
 import {
-  exportByTemplate,
+  exportByTemplateStream,
   EXPORT_TEMPLATES,
 } from "../../services/export.service";
 
@@ -47,15 +47,27 @@ export default async function exportRoutes(server: FastifyInstance) {
       const query = request.query as Record<string, string>;
       const limit = Math.min(parseInt(query.limit) || 10000, 50000);
 
-      // Extract filter params (everything except 'limit')
+      // SECURITY: Allowlist of safe filter keys per entity.
+      // NEVER spread raw query params into Prisma where — prevents
+      // tenant bypass via ?schoolId=OTHER_SCHOOL_ID
+      const SAFE_FILTER_KEYS: Record<string, string[]> = {
+        students: ["classId", "sectionId", "gender", "status"],
+        teachers: ["department", "status"],
+        fees: ["status", "feeType", "classId", "sectionId", "studentId"],
+        attendance: ["classId", "sectionId", "date", "status", "session"],
+        results: ["examId", "classId", "sectionId", "subject"],
+      };
+
+      const allowedKeys = SAFE_FILTER_KEYS[template] ?? [];
       const filters: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(query)) {
-        if (key !== "limit" && value) {
-          filters[key] = value;
+      for (const key of allowedKeys) {
+        if (query[key]) {
+          filters[key] = query[key];
         }
       }
 
-      const csv = await exportByTemplate(
+      // Stream CSV rows directly — O(batch) memory, never buffers full dataset
+      const csvStream = exportByTemplateStream(
         template,
         schoolId,
         Object.keys(filters).length > 0 ? filters : undefined,
@@ -64,11 +76,21 @@ export default async function exportRoutes(server: FastifyInstance) {
 
       const filename = `${template}_export_${new Date().toISOString().split("T")[0]}.csv`;
 
-      return reply
+      reply
         .status(200)
         .header("Content-Type", "text/csv; charset=utf-8")
-        .header("Content-Disposition", `attachment; filename="${filename}"`)
-        .send(csv);
+        .header("Content-Disposition", `attachment; filename="${filename}"`);
+
+      // Use raw response to pipe async generator chunks
+      const raw = reply.raw;
+      for await (const chunk of csvStream) {
+        const canContinue = raw.write(chunk);
+        if (!canContinue) {
+          await new Promise<void>((resolve) => raw.once("drain", resolve));
+        }
+      }
+      raw.end();
+      return reply;
     }
   );
 

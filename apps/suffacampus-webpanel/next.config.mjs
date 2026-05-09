@@ -37,7 +37,7 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: blob: https://firebasestorage.googleapis.com",
-              `connect-src 'self'${isDev ? ' http://localhost:5000' : ''} https://*.onrender.com https://*.azurewebsites.net https://*.googleapis.com https://identitytoolkit.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com wss://*.firebaseio.com https://api.razorpay.com https://lumberjack.razorpay.com`,
+              `connect-src 'self'${isDev ? ' http://localhost:5000' : ''} https://*.azurewebsites.net https://*.googleapis.com https://identitytoolkit.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com wss://*.firebaseio.com https://api.razorpay.com https://lumberjack.razorpay.com`,
               "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://*.firebaseapp.com",
               "object-src 'none'",
               "base-uri 'self'",

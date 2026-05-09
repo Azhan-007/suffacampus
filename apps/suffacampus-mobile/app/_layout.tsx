@@ -1,9 +1,9 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { Stack } from "expo-router";
-import { useEffect, useRef } from "react";
-import { StyleSheet, Text, TouchableOpacity, View, AppState, AppStateStatus } from "react-native";
+import { useEffect } from "react";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useAuth } from "../hooks/useAuth";
-import { flushOfflineQueue } from '../services/offlineSyncQueue';
+import { useNetworkSync } from "../hooks/useNetworkSync";
 
 /**
  * Expo Router ErrorBoundary — catches unhandled JS errors per route.
@@ -33,9 +33,11 @@ const ebStyles = StyleSheet.create({
 
 export default function RootLayout() {
   useAuth();
-  
-  const appState = useRef(AppState.currentState);
-  const periodicTimerRef = useRef<number | null>(null);
+
+  // ─── Network-aware offline queue sync ──────────────────────────────────────
+  // Replaces the previous manual AppState listener + setInterval pattern.
+  // Handles: foreground detection, periodic flush, and network-aware retry.
+  useNetworkSync();
 
   // -----------------------------------------------------------------------
   // NOTE: expo-notifications setup was removed from the root layout.
@@ -56,45 +58,7 @@ export default function RootLayout() {
       deactivateKeepAwake('root-layout');
     };
   }, []);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
-      if (
-        appState.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
-        console.log('[AppState] App foreground: flushing offline queue');
-        try {
-          await flushOfflineQueue();
-        } catch (error) {
-          console.warn('[AppState] Offline queue flush failed:', error);
-        }
-      }
-      appState.current = nextAppState;
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    const timer = setInterval(async () => {
-      try {
-        await flushOfflineQueue();
-      } catch (error) {
-        console.warn('[PeriodicFlush] Offline queue flush failed:', error);
-      }
-    }, 30_000);
-
-    periodicTimerRef.current = timer as any;
-
-    return () => {
-      if (periodicTimerRef.current !== null) {
-        clearInterval(periodicTimerRef.current);
-      }
-    };
-  }, []);
   
   return <Stack screenOptions={{ headerShown: false }} />;
 }
+
