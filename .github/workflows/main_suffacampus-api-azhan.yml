@@ -64,6 +64,7 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C3BBA0D2BA83459E9B74252429BC7C24 }}
 
       - name: Deploy to Azure Web App
+        id: deploy_step
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_APP_NAME }}
@@ -75,10 +76,12 @@ jobs:
       # Catches deployment failures that would otherwise go unnoticed.
       - name: Verify deployment health
         run: |
+          APP_URL="${{ steps.deploy_step.outputs.webapp-url }}"
+          echo "Checking health for: $APP_URL"
           echo "Waiting 15s for app to restart..."
           sleep 15
           for i in 1 2 3 4 5; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://${{ env.AZURE_APP_NAME }}.azurewebsites.net/health/live" || true)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL/health/live" || true)
             echo "Health check attempt $i: HTTP $STATUS"
             if [ "$STATUS" = "200" ]; then
               echo "✅ Deployment healthy"
