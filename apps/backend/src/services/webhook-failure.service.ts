@@ -1,6 +1,6 @@
 import pino from "pino";
 import { prisma } from "../lib/prisma";
-import { handlePaymentCaptured, type PaymentCapturedPayload } from "./payment.service";
+import { processProviderPayment, type PaymentCapturedPayload, type ProviderPaymentData } from "./payment.service";
 
 const log = pino({ name: "webhook-failure" });
 
@@ -64,21 +64,69 @@ export async function retryWebhookFailure(failureId: string): Promise<RetryResul
         where: { id: failureId },
         data: { status: "failed", retryCount: { increment: 1 }, lastRetriedAt: now, errorMessage: "rawPayload is not valid JSON" },
       });
+
+      if (failure.razorpayEventId) {
+        await prisma.webhookEvent.updateMany({
+          where: { eventId: failure.razorpayEventId },
+          data: { status: "FAILED", failureReason: "rawPayload is not valid JSON" },
+        });
+      }
       return { success: false, error: "rawPayload is not valid JSON" };
     }
 
     if (failure.eventType === "payment.captured") {
-      const processed = await handlePaymentCaptured(payload);
+      const payment = payload.payload?.payment?.entity;
+      if (!payment) {
+        await prisma.webhookFailure.update({
+          where: { id: failureId },
+          data: {
+            status: "failed",
+            retryCount: { increment: 1 },
+            lastRetriedAt: now,
+            errorMessage: "payment.captured payload missing payment entity",
+          },
+        });
+        return { success: false, error: "payment.captured payload missing payment entity" };
+      }
+
+      const paymentData: ProviderPaymentData = {
+        status: payment.status,
+        amount: payment.amount,
+        currency: payment.currency,
+        method: payment.method,
+        notes: payment.notes,
+        orderId: payment.order_id,
+      };
+
+      const processed = await processProviderPayment(payment.id, payment.order_id ?? null, {
+        source: "retry",
+        paymentData,
+      });
+
+      if (failure.razorpayEventId) {
+        await prisma.webhookEvent.updateMany({
+          where: { eventId: failure.razorpayEventId },
+          data: {
+            status: "PROCESSED",
+            processedAt: now,
+            failureReason: processed.processed
+              ? null
+              : "Resolved as duplicate — payment already processed",
+          },
+        });
+      }
 
       await prisma.webhookFailure.update({
         where: { id: failureId },
         data: {
           status: "resolved", retryCount: { increment: 1 }, lastRetriedAt: now, resolvedAt: now,
-          errorMessage: processed ? failure.errorMessage : "Resolved as duplicate — payment already processed",
+          errorMessage: processed.processed
+            ? failure.errorMessage
+            : "Resolved as duplicate — payment already processed",
         },
       });
 
-      return { success: true, alreadyResolved: false, duplicate: !processed };
+      return { success: true, alreadyResolved: false, duplicate: !processed.processed };
     }
 
     // Unsupported event type — mark resolved
@@ -94,6 +142,13 @@ export async function retryWebhookFailure(failureId: string): Promise<RetryResul
       where: { id: failureId },
       data: { status: "failed", retryCount: { increment: 1 }, lastRetriedAt: now, errorMessage, errorStack: err instanceof Error ? (err.stack ?? null) : null },
     });
+
+    if (failure.razorpayEventId) {
+      await prisma.webhookEvent.updateMany({
+        where: { eventId: failure.razorpayEventId },
+        data: { status: "FAILED", failureReason: errorMessage },
+      });
+    }
     return { success: false, error: errorMessage };
   }
 }

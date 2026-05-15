@@ -5,7 +5,7 @@ import type { UpdateTeacherInput } from "../schemas/update.schema";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
 import { assertSchoolScope } from "../lib/tenant-scope";
-import { enforcePlanLimit } from "./plan-limit.service";
+import { reserveCapacity, consumeReservedCapacity } from "./quota.service";
 
 export interface TeacherCredentials {
   email: string;
@@ -83,26 +83,42 @@ export async function createTeacher(
   performedBy: string
 ) {
   assertSchoolScope(schoolId);
-  // Note: enforcePlanLimit is already handled by the enforceSubscription middleware
-
   const { assignedClasses, ...teacherData } = data;
 
-  const teacher = await prisma.teacher.create({
-    data: {
+  const teacher = await prisma.$transaction(async (tx) => {
+    await reserveCapacity({
       schoolId,
-      ...teacherData,
-      isDeleted: false,
-      assignedClasses: assignedClasses
-        ? { create: assignedClasses.map((ac) => ({
-            classId: ac.classId,
-            sectionId: ac.sectionId,
-            className: ac.className,
-            sectionName: ac.sectionName,
-          }))
-        }
-        : undefined,
-    },
-    include: { assignedClasses: true },
+      resourceType: "teachers",
+      amount: 1,
+      useTransaction: tx,
+    });
+
+    const created = await tx.teacher.create({
+      data: {
+        schoolId,
+        ...teacherData,
+        isDeleted: false,
+        assignedClasses: assignedClasses
+          ? { create: assignedClasses.map((ac) => ({
+              classId: ac.classId,
+              sectionId: ac.sectionId,
+              className: ac.className,
+              sectionName: ac.sectionName,
+            }))
+          }
+          : undefined,
+      },
+      include: { assignedClasses: true },
+    });
+
+    await consumeReservedCapacity({
+      schoolId,
+      resourceType: "teachers",
+      amount: 1,
+      useTransaction: tx,
+    });
+
+    return created;
   });
 
   // Pre-compute credentials so we can return them immediately

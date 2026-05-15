@@ -1,9 +1,12 @@
 import crypto from "crypto";
+import { Prisma } from "@prisma/client";
 import { razorpay } from "../lib/razorpay";
-import { prisma } from "../lib/prisma";
+import { prisma, type PrismaTransactionClient } from "../lib/prisma";
+import { createImmutableInvoice } from "./invoice.service";
 import { writeAuditLog } from "./audit.service";
 import { Errors } from "../errors";
 import { assertSchoolScope } from "../lib/tenant-scope";
+import { activatePaid } from "./tenant-lifecycle.service";
 
 // ---------------------------------------------------------------------------
 // Plan durations
@@ -421,8 +424,39 @@ export interface PaymentCapturedPayload {
   };
 }
 
+export type PaymentSource = "webhook" | "verify" | "retry" | "reconcile";
+
+export interface ProviderPaymentData {
+  status: string;
+  amount: number;
+  currency: string;
+  method?: string;
+  notes?: Record<string, string>;
+  orderId?: string | null;
+}
+
+export interface ProcessProviderPaymentOptions {
+  source?: PaymentSource;
+  gatewaySignature?: string;
+  fallbackMetadata?: Record<string, unknown>;
+  paymentData?: ProviderPaymentData;
+  useTransaction?: PrismaTransactionClient;
+}
+
+export interface ProcessProviderPaymentResult {
+  processed: boolean;
+  duplicate: boolean;
+  schoolId?: string;
+  plan?: string;
+  durationDays?: number;
+  activationState?: ActivationFinalState;
+  activationFailureReason?: string | null;
+  paymentId: string;
+  orderId: string | null;
+}
+
 export interface HandlePaymentCapturedOptions {
-  source?: "webhook" | "verify" | "retry";
+  source?: PaymentSource;
   gatewaySignature?: string;
   fallbackMetadata?: Record<string, unknown>;
 }
@@ -539,159 +573,490 @@ function buildCaptureContext(
   };
 }
 
-export async function handlePaymentCaptured(
-  payload: PaymentCapturedPayload,
-  options: HandlePaymentCapturedOptions = {}
-): Promise<boolean> {
-  const payment = payload.payload.payment.entity;
-  const notes = toStringRecord(payment.notes);
+type ActivationFinalState =
+  | "activated"
+  | "captured_activation_pending"
+  | "activation_failed"
+  | "reconciliation_required";
 
-  if (String(payment.status).toLowerCase() !== "captured") {
+async function lockCanonicalPaymentRow(
+  tx: PrismaTransactionClient,
+  providerPaymentId: string,
+  providerOrderId: string | null
+): Promise<{ id: string } | null> {
+  const paymentIdFilter = providerOrderId
+    ? Prisma.sql`("gatewayId" = ${providerPaymentId} OR "gatewayOrderId" = ${providerOrderId})`
+    : Prisma.sql`"gatewayId" = ${providerPaymentId}`;
+
+  const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT "id"
+    FROM "Payment"
+    WHERE ${paymentIdFilter}
+    ORDER BY "updatedAt" DESC, "createdAt" DESC
+    LIMIT 1
+    FOR UPDATE
+  `);
+
+  return rows[0] ?? null;
+}
+
+async function findCanonicalPaymentRow(
+  tx: PrismaTransactionClient,
+  providerPaymentId: string,
+  providerOrderId: string | null
+) {
+  return tx.legacyPayment.findFirst({
+    where: {
+      OR: [
+        { gatewayId: providerPaymentId },
+        ...(providerOrderId ? [{ gatewayOrderId: providerOrderId }] : []),
+      ],
+    },
+    select: {
+      id: true,
+      schoolId: true,
+      amount: true,
+      currency: true,
+      status: true,
+      gatewayId: true,
+      gatewayOrderId: true,
+      paymentMethodDetails: true,
+      activationState: true,
+      activationAttemptCount: true,
+      activationLastError: true,
+      invoiceId: true,
+      ledgerEventId: true,
+    },
+  });
+}
+
+async function writeActivationLedger(
+  tx: PrismaTransactionClient,
+  params: {
+    schoolId: string;
+    legacyPaymentId: string;
+    providerPaymentId: string;
+    providerOrderId: string | null;
+    action: string;
+    state: ActivationFinalState;
+    details?: Record<string, unknown>;
+  }
+): Promise<string> {
+  const record = await tx.paymentActivationLedger.upsert({
+    where: {
+      legacyPaymentId_action: {
+        legacyPaymentId: params.legacyPaymentId,
+        action: params.action,
+      },
+    },
+    create: {
+      schoolId: params.schoolId,
+      legacyPaymentId: params.legacyPaymentId,
+      providerPaymentId: params.providerPaymentId,
+      providerOrderId: params.providerOrderId,
+      action: params.action,
+      state: params.state,
+      details: params.details ?? undefined,
+    },
+    update: {
+      state: params.state,
+      providerPaymentId: params.providerPaymentId,
+      providerOrderId: params.providerOrderId,
+      details: params.details ?? undefined,
+    },
+  });
+
+  return record.id;
+}
+
+function buildPaymentActivationMarker(
+  providerPaymentId: string,
+  state: ActivationFinalState,
+  attempt: number
+): string {
+  return `${providerPaymentId}:${state}:${attempt}`;
+}
+
+async function fetchProviderPaymentData(paymentId: string): Promise<ProviderPaymentData> {
+  const fetched = (await razorpay.payments.fetch(paymentId)) as unknown as Record<string, unknown>;
+
+  if (!isRecord(fetched)) {
+    throw Errors.paymentFailed("Unable to validate payment with gateway");
+  }
+
+  return {
+    status: String(fetched.status ?? ""),
+    amount: Math.trunc(Number(fetched.amount ?? 0)),
+    currency: String(fetched.currency ?? "INR"),
+    method: String(fetched.method ?? ""),
+    notes: toStringRecord(fetched.notes),
+    orderId: fetched.order_id ? String(fetched.order_id) : null,
+  };
+}
+
+export async function processProviderPayment(
+  providerPaymentId: string,
+  providerOrderId: string | null,
+  options: ProcessProviderPaymentOptions = {}
+): Promise<ProcessProviderPaymentResult> {
+  if (!providerPaymentId) {
+    throw Errors.badRequest("providerPaymentId is required");
+  }
+
+  const source = options.source ?? "webhook";
+  const paymentData = options.paymentData ?? (await fetchProviderPaymentData(providerPaymentId));
+  const normalizedStatus = String(paymentData.status ?? "").toLowerCase();
+
+  if (normalizedStatus !== "captured") {
     throw Errors.paymentFailed("Payment is not captured");
   }
 
-  const context = buildCaptureContext(notes, options.fallbackMetadata);
-  const amount = Math.trunc(Number(payment.amount));
-  const currency = normalizeCurrency(payment.currency);
+  const amount = Math.trunc(Number(paymentData.amount));
+  const currency = normalizeCurrency(paymentData.currency);
 
   if (!Number.isFinite(amount) || amount <= 0) {
     throw Errors.badRequest("Captured payment amount is invalid");
   }
 
+  const notes = toStringRecord(paymentData.notes);
+  const orderId = providerOrderId ?? paymentData.orderId ?? null;
   const now = new Date();
-  const periodEnd = new Date(
-    now.getTime() + context.durationDays * 24 * 60 * 60 * 1000
-  );
 
-  try {
-    const processed = await prisma.$transaction(async (tx) => {
-      const existingInvoice = await tx.invoice.findFirst({
-        where: { razorpayPaymentId: payment.id },
-        select: { id: true },
-      });
+  const run = async (tx: PrismaTransactionClient): Promise<ProcessProviderPaymentResult> => {
+    const existingInvoice = await tx.invoice.findFirst({
+      where: {
+        OR: [
+          { razorpayPaymentId: providerPaymentId },
+          ...(orderId ? [{ razorpayOrderId: orderId }] : []),
+        ],
+      },
+      select: { id: true, schoolId: true },
+    });
 
-      if (existingInvoice) {
-        return false;
-      }
+    const existingPayment = await findCanonicalPaymentRow(tx, providerPaymentId, orderId);
 
-      const existingOrderPayment = await tx.legacyPayment.findUnique({
-        where: { gatewayOrderId: payment.order_id },
-        select: { id: true, schoolId: true, paymentMethodDetails: true },
-      });
+    if (existingPayment) {
+      await lockCanonicalPaymentRow(tx, providerPaymentId, orderId);
+    }
 
-      if (existingOrderPayment && existingOrderPayment.schoolId !== context.schoolId) {
-        throw Errors.tenantMismatch();
-      }
-
-      const method = normalizePaymentMethod(payment.method);
-      const combinedMetadata = {
-        ...readFallbackNotes(existingOrderPayment?.paymentMethodDetails),
-        ...notes,
-        plan: context.plan,
-        billingCycle: context.billingCycle,
-        durationDays: context.durationDays,
-        source: options.source ?? "webhook",
+    if (existingInvoice || existingPayment?.activationState === "activated") {
+      return {
+        processed: false,
+        duplicate: true,
+        schoolId: existingInvoice?.schoolId ?? existingPayment?.schoolId,
+        paymentId: providerPaymentId,
+        orderId,
+        activationState: "activated",
+        activationFailureReason: null,
       };
+    }
 
-      if (existingOrderPayment) {
-        await tx.legacyPayment.update({
-          where: { id: existingOrderPayment.id },
+    const fallbackMetadata = {
+      ...readFallbackNotes(existingPayment?.paymentMethodDetails),
+      ...readFallbackNotes(options.fallbackMetadata),
+    };
+
+    const context = buildCaptureContext(notes, fallbackMetadata);
+    const periodEnd = new Date(now.getTime() + context.durationDays * 24 * 60 * 60 * 1000);
+    const method = normalizePaymentMethod(paymentData.method);
+    const combinedMetadata = {
+      ...fallbackMetadata,
+      ...notes,
+      plan: context.plan,
+      billingCycle: context.billingCycle,
+      durationDays: context.durationDays,
+      source,
+    };
+
+    const paymentRow = existingPayment
+      ? await tx.legacyPayment.update({
+          where: { id: existingPayment.id },
           data: {
-            status: "completed",
             amount,
             currency,
+            status: "completed",
             method,
-            gatewayId: payment.id,
+            gatewayId: providerPaymentId,
+            gatewayOrderId: orderId ?? undefined,
             gatewaySignature: options.gatewaySignature,
-            verifiedAt: new Date(),
+            verifiedAt: now,
+            activationState: "captured_activation_pending",
+            activationAttemptCount: { increment: 1 },
+            activationRequestedAt: now,
+            activationStartedAt: now,
+            activationLastError: null,
+            capturedAt: now,
+            reconciliationMarker: buildPaymentActivationMarker(
+              providerPaymentId,
+              "captured_activation_pending",
+              existingPayment.activationAttemptCount + 1
+            ),
             paymentMethodDetails: combinedMetadata,
+            failureReason: null,
           },
-        });
-      } else {
-        await tx.legacyPayment.create({
+          select: {
+            id: true,
+            schoolId: true,
+            activationAttemptCount: true,
+          },
+        })
+      : await tx.legacyPayment.create({
           data: {
             schoolId: context.schoolId,
             amount,
             currency,
             status: "completed",
             method,
-            gatewayId: payment.id,
-            gatewayOrderId: payment.order_id,
+            gatewayId: providerPaymentId,
+            gatewayOrderId: orderId ?? undefined,
             gatewaySignature: options.gatewaySignature,
-            verifiedAt: new Date(),
-            description: `Subscription payment for ${context.plan}`,
+            verifiedAt: now,
+            activationState: "captured_activation_pending",
+            activationAttemptCount: 1,
+            activationRequestedAt: now,
+            activationStartedAt: now,
+            capturedAt: now,
+            reconciliationMarker: buildPaymentActivationMarker(
+              providerPaymentId,
+              "captured_activation_pending",
+              1
+            ),
             paymentMethodDetails: combinedMetadata,
+            description: `Subscription payment for ${context.plan}`,
+          },
+          select: {
+            id: true,
+            schoolId: true,
+            activationAttemptCount: true,
           },
         });
-      }
 
-      await tx.school.update({
-        where: { id: context.schoolId },
-        data: {
-          subscriptionPlan: context.plan as any,
-          subscriptionStatus: "active",
-          currentPeriodStart: now,
-          currentPeriodEnd: periodEnd,
-          paymentFailureCount: 0,
-          lastPaymentId: payment.id,
-        },
-      });
-
-      await tx.invoice.create({
-        data: {
-          schoolId: context.schoolId,
-          plan: context.plan,
-          razorpayPaymentId: payment.id,
-          razorpayOrderId: payment.order_id,
-          amount,
-          currency,
-          status: "paid",
-          periodStart: now,
-          periodEnd,
-          paidAt: now,
-        },
-      });
-
-      return true;
+    const captureLedgerId = await writeActivationLedger(tx, {
+      schoolId: context.schoolId,
+      legacyPaymentId: paymentRow.id,
+      providerPaymentId,
+      providerOrderId: orderId,
+      action: "capture_received",
+      state: "captured_activation_pending",
+      details: {
+        source,
+        amount,
+        currency,
+        plan: context.plan,
+        durationDays: context.durationDays,
+      },
     });
 
-    if (!processed) {
-      return false;
+    const finalizeActivation = async (): Promise<void> => {
+      const transition = await activatePaid({
+        schoolId: context.schoolId,
+        plan: context.plan,
+        periodStart: now,
+        periodEnd,
+        paymentId: providerPaymentId,
+        performedBy: "system",
+        reason: "payment_captured",
+        source,
+        useTransaction: tx,
+      });
+
+      if (transition.status !== "applied" && transition.status !== "noop") {
+        throw Errors.conflict("Subscription activation conflict — retry processing");
+      }
+
+      const invoice = await createImmutableInvoice(tx, {
+        schoolId: context.schoolId,
+        plan: context.plan,
+        amount,
+        currency,
+        status: "paid",
+        razorpayPaymentId: providerPaymentId,
+        razorpayOrderId: orderId,
+        periodStart: now,
+        periodEnd,
+        description: `Subscription payment for ${context.plan}`,
+        paidAt: now,
+        finalizedAt: now,
+      });
+
+      await tx.legacyPayment.update({
+        where: { id: paymentRow.id },
+        data: {
+          activationState: "activated",
+          activationCompletedAt: now,
+          activationLastError: null,
+          invoiceId: invoice.id,
+          ledgerEventId: captureLedgerId,
+          reconciliationMarker: buildPaymentActivationMarker(
+            providerPaymentId,
+            "activated",
+            paymentRow.activationAttemptCount
+          ),
+          reconciledAt: now,
+        },
+      });
+
+      const activationLedgerId = await writeActivationLedger(tx, {
+        schoolId: context.schoolId,
+        legacyPaymentId: paymentRow.id,
+        providerPaymentId,
+        providerOrderId: orderId,
+        action: "activation_complete",
+        state: "activated",
+        details: {
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          plan: context.plan,
+        },
+      });
+
+      await tx.legacyPayment.update({
+        where: { id: paymentRow.id },
+        data: {
+          ledgerEventId: activationLedgerId,
+        },
+      });
+    };
+
+    try {
+      await finalizeActivation();
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : String(error);
+
+      await tx.legacyPayment.update({
+        where: { id: paymentRow.id },
+        data: {
+          activationState: "activation_failed",
+          activationLastError: failureMessage,
+          activationStartedAt: now,
+          reconciliationMarker: buildPaymentActivationMarker(
+            providerPaymentId,
+            "activation_failed",
+            paymentRow.activationAttemptCount
+          ),
+        },
+      });
+
+      await writeActivationLedger(tx, {
+        schoolId: context.schoolId,
+        legacyPaymentId: paymentRow.id,
+        providerPaymentId,
+        providerOrderId: orderId,
+        action: "activation_failed",
+        state: "activation_failed",
+        details: {
+          errorMessage: failureMessage,
+          source,
+          plan: context.plan,
+        },
+      });
+
+      return {
+        processed: true,
+        duplicate: false,
+        schoolId: context.schoolId,
+        plan: context.plan,
+        durationDays: context.durationDays,
+        activationState: "activation_failed",
+        activationFailureReason: failureMessage,
+        paymentId: providerPaymentId,
+        orderId,
+      };
     }
+
+    return {
+      processed: true,
+      duplicate: false,
+      schoolId: context.schoolId,
+      plan: context.plan,
+      durationDays: context.durationDays,
+      activationState: "activated",
+      activationFailureReason: null,
+      paymentId: providerPaymentId,
+      orderId,
+    };
+  };
+
+  let result: ProcessProviderPaymentResult;
+
+  try {
+    result = options.useTransaction ? await run(options.useTransaction) : await prisma.$transaction(run);
   } catch (error) {
     if (isPrismaUniqueViolation(error)) {
-      return false;
+      return {
+        processed: false,
+        duplicate: true,
+        activationFailureReason: null,
+        paymentId: providerPaymentId,
+        orderId,
+      };
     }
 
     throw error;
   }
 
-  await writeAuditLog("PAYMENT_RECEIVED", "system", context.schoolId, {
+  if (result.processed && result.schoolId) {
+    await writeAuditLog("PAYMENT_RECEIVED", "system", result.schoolId, {
+      source,
+      razorpayPaymentId: providerPaymentId,
+      razorpayOrderId: result.orderId,
+      amount,
+      currency,
+      activationState: result.activationState,
+    });
+
+    await writeAuditLog("PAYMENT_CAPTURED", "system", result.schoolId, {
+      source,
+      razorpayPaymentId: providerPaymentId,
+      razorpayOrderId: result.orderId,
+      amount,
+      currency,
+      activationState: result.activationState,
+      capturedAt: now.toISOString(),
+    });
+
+    if (result.activationState === "activated") {
+      await writeAuditLog("SUBSCRIPTION_UPGRADED", "system", result.schoolId, {
+        plan: result.plan,
+        subscriptionStatus: "active",
+        durationDays: result.durationDays,
+      });
+    } else if (result.activationState === "activation_failed" && source !== "reconcile") {
+      void import("./payment-recovery-queue.service.js")
+        .then(({ enqueuePaymentRecovery }) =>
+          enqueuePaymentRecovery(result.paymentId, {
+            requestedBy: "system:payment-activation",
+          })
+        )
+        .catch((err) => {
+          console.warn("Failed to enqueue payment recovery", err);
+        });
+    }
+  }
+
+  return result;
+}
+
+export async function handlePaymentCaptured(
+  payload: PaymentCapturedPayload,
+  options: HandlePaymentCapturedOptions = {}
+): Promise<boolean> {
+  const payment = payload.payload.payment.entity;
+  const result = await processProviderPayment(payment.id, payment.order_id ?? null, {
     source: options.source ?? "webhook",
-    razorpayPaymentId: payment.id,
-    razorpayOrderId: payment.order_id,
-    amount,
-    currency,
-    plan: context.plan,
+    gatewaySignature: options.gatewaySignature,
+    fallbackMetadata: options.fallbackMetadata,
+    paymentData: {
+      status: payment.status,
+      amount: payment.amount,
+      currency: payment.currency,
+      method: payment.method,
+      notes: toStringRecord(payment.notes),
+      orderId: payment.order_id,
+    },
   });
 
-  await writeAuditLog("PAYMENT_CAPTURED", "system", context.schoolId, {
-    source: options.source ?? "webhook",
-    razorpayPaymentId: payment.id,
-    razorpayOrderId: payment.order_id,
-    amount,
-    currency,
-    plan: context.plan,
-    capturedAt: now.toISOString(),
-  });
-
-  await writeAuditLog("SUBSCRIPTION_UPGRADED", "system", context.schoolId, {
-    plan: context.plan,
-    subscriptionStatus: "active",
-    durationDays: context.durationDays,
-  });
-
-  return true;
+  return result.processed;
 }
 
 export interface VerifyPaymentOptions {

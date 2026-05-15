@@ -23,6 +23,8 @@ import webhookRoutes from "./routes/webhooks";
 import webhookRetryRoutes from "./routes/webhook-retry";
 import { startCronJobs, stopCronJobs } from "./jobs";
 import { initWebhookRetryQueue, shutdownWebhookRetryQueue } from "./services/webhook-retry-queue.service";
+import { initWebhookEventQueue, shutdownWebhookEventQueue } from "./services/webhook-event-queue.service";
+import { initPaymentRecoveryQueue, shutdownPaymentRecoveryQueue } from "./services/payment-recovery-queue.service";
 import {
   initNotificationQueueWorker,
   shutdownNotificationQueueWorker,
@@ -468,6 +470,10 @@ async function main() {
 
     await initWebhookRetryQueue();
     server.log.info("Webhook retry queue initialized");
+    await initWebhookEventQueue();
+    server.log.info("Webhook event queue initialized");
+    await initPaymentRecoveryQueue();
+    server.log.info("Payment recovery queue initialized");
     server.log.info("Application startup complete");
   } catch (err) {
     server.log.error(err);
@@ -491,6 +497,8 @@ async function main() {
         stopCronJobs();
         await shutdownNotificationQueueWorker();
         await shutdownWebhookRetryQueue();
+        await shutdownWebhookEventQueue();
+        await shutdownPaymentRecoveryQueue();
         await flushSentry();
         await server.close(); // drains in-flight connections
       } catch (err) {

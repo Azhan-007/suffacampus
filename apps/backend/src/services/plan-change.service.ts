@@ -9,6 +9,7 @@ import { createCreditNote } from "./invoice.service";
 import { writeAuditLog } from "./audit.service";
 import { createNotification } from "./notification.service";
 import { assertSchoolScope } from "../lib/tenant-scope";
+import { transitionTenantLifecycle } from "./tenant-lifecycle.service";
 
 export interface PlanDefinition {
   name: string;
@@ -172,6 +173,14 @@ export async function executePlanChange(schoolId: string, newPlanName: string, b
 
   if (newPlanName.toLowerCase() === "free") {
     await prisma.school.update({ where: { id: schoolId }, data: { subscriptionPlan: "free", subscriptionStatus: "active", maxStudents: newPlan.limits.maxStudents, maxTeachers: newPlan.limits.maxTeachers } });
+    await transitionTenantLifecycle({
+      schoolId,
+      targetLifecycle: "active",
+      accessState: "active",
+      reason: "plan_free_switch",
+      performedBy,
+      source: "plan_change",
+    });
     await writeAuditLog("PLAN_CHANGED", performedBy, schoolId, { type: "downgrade", from: preview.currentPlan, to: "free" });
     if (notificationContext) {
       await createNotification(
