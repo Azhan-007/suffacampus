@@ -1,14 +1,52 @@
--- CreateEnum
-CREATE TYPE "DriftType" AS ENUM ('reconciliation_required', 'provider_missing', 'provider_mismatch', 'orphaned_capture', 'orphaned_invoice', 'activation_drift', 'refund_drift', 'stale_pending', 'stale_overdue', 'invoice_payment_mismatch');
+-- Reconciliation drift detection and repair records.
+-- Safe to run multiple times (idempotent) — all objects use IF NOT EXISTS guards.
 
--- CreateEnum
-CREATE TYPE "DriftStatus" AS ENUM ('detected', 'repair_attempted', 'repaired', 'manual_review_required', 'dismissed');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'DriftType') THEN
+    CREATE TYPE "DriftType" AS ENUM (
+      'reconciliation_required',
+      'provider_missing',
+      'provider_mismatch',
+      'orphaned_capture',
+      'orphaned_invoice',
+      'activation_drift',
+      'refund_drift',
+      'stale_pending',
+      'stale_overdue',
+      'invoice_payment_mismatch'
+    );
+  END IF;
+END $$;
 
--- CreateEnum
-CREATE TYPE "ReconciliationEventType" AS ENUM ('drift_detected', 'repair_attempted', 'repair_succeeded', 'repair_failed', 'manual_review_required');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'DriftStatus') THEN
+    CREATE TYPE "DriftStatus" AS ENUM (
+      'detected',
+      'repair_attempted',
+      'repaired',
+      'manual_review_required',
+      'dismissed'
+    );
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ReconciliationEventType') THEN
+    CREATE TYPE "ReconciliationEventType" AS ENUM (
+      'drift_detected',
+      'repair_attempted',
+      'repair_succeeded',
+      'repair_failed',
+      'manual_review_required'
+    );
+  END IF;
+END $$;
 
 -- CreateTable
-CREATE TABLE "ReconciliationDriftRecord" (
+CREATE TABLE IF NOT EXISTS "ReconciliationDriftRecord" (
     "id" TEXT NOT NULL,
     "schoolId" TEXT,
     "driftType" "DriftType" NOT NULL,
@@ -27,13 +65,13 @@ CREATE TABLE "ReconciliationDriftRecord" (
     "repairDetails" JSONB,
     "detectedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ReconciliationDriftRecord_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
-CREATE TABLE "ReconciliationAuditEvent" (
+CREATE TABLE IF NOT EXISTS "ReconciliationAuditEvent" (
     "id" TEXT NOT NULL,
     "schoolId" TEXT,
     "eventType" "ReconciliationEventType" NOT NULL,
@@ -49,16 +87,17 @@ CREATE TABLE "ReconciliationAuditEvent" (
 );
 
 -- CreateIndex
-CREATE INDEX "ReconciliationDriftRecord_schoolId_idx" ON "ReconciliationDriftRecord"("schoolId");
-CREATE INDEX "ReconciliationDriftRecord_driftType_idx" ON "ReconciliationDriftRecord"("driftType");
-CREATE INDEX "ReconciliationDriftRecord_status_idx" ON "ReconciliationDriftRecord"("status");
-CREATE INDEX "ReconciliationDriftRecord_entityType_entityId_idx" ON "ReconciliationDriftRecord"("entityType", "entityId");
-CREATE INDEX "ReconciliationDriftRecord_providerPaymentId_idx" ON "ReconciliationDriftRecord"("providerPaymentId");
-CREATE INDEX "ReconciliationDriftRecord_detectedAt_idx" ON "ReconciliationDriftRecord"("detectedAt");
-CREATE INDEX "ReconciliationDriftRecord_status_driftType_idx" ON "ReconciliationDriftRecord"("status", "driftType");
+CREATE INDEX IF NOT EXISTS "ReconciliationDriftRecord_schoolId_idx" ON "ReconciliationDriftRecord"("schoolId");
+CREATE INDEX IF NOT EXISTS "ReconciliationDriftRecord_driftType_idx" ON "ReconciliationDriftRecord"("driftType");
+CREATE INDEX IF NOT EXISTS "ReconciliationDriftRecord_status_idx" ON "ReconciliationDriftRecord"("status");
+CREATE INDEX IF NOT EXISTS "ReconciliationDriftRecord_entityType_entityId_idx" ON "ReconciliationDriftRecord"("entityType", "entityId");
+CREATE INDEX IF NOT EXISTS "ReconciliationDriftRecord_providerPaymentId_idx" ON "ReconciliationDriftRecord"("providerPaymentId");
+CREATE INDEX IF NOT EXISTS "ReconciliationDriftRecord_detectedAt_idx" ON "ReconciliationDriftRecord"("detectedAt");
+CREATE INDEX IF NOT EXISTS "ReconciliationDriftRecord_status_driftType_idx" ON "ReconciliationDriftRecord"("status", "driftType");
 
 -- CreateIndex
-CREATE INDEX "ReconciliationAuditEvent_schoolId_idx" ON "ReconciliationAuditEvent"("schoolId");
-CREATE INDEX "ReconciliationAuditEvent_eventType_idx" ON "ReconciliationAuditEvent"("eventType");
-CREATE INDEX "ReconciliationAuditEvent_driftRecordId_idx" ON "ReconciliationAuditEvent"("driftRecordId");
-CREATE INDEX "ReconciliationAuditEvent_createdAt_idx" ON "ReconciliationAuditEvent"("createdAt");
+CREATE INDEX IF NOT EXISTS "ReconciliationAuditEvent_schoolId_idx" ON "ReconciliationAuditEvent"("schoolId");
+CREATE INDEX IF NOT EXISTS "ReconciliationAuditEvent_eventType_idx" ON "ReconciliationAuditEvent"("eventType");
+CREATE INDEX IF NOT EXISTS "ReconciliationAuditEvent_driftRecordId_idx" ON "ReconciliationAuditEvent"("driftRecordId");
+CREATE INDEX IF NOT EXISTS "ReconciliationAuditEvent_createdAt_idx" ON "ReconciliationAuditEvent"("createdAt");
+
