@@ -1,9 +1,25 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import pino from "pino";
 import { writeAuditLog } from "./audit.service";
 import { assertSchoolScope } from "../lib/tenant-scope";
+import {
+  transitionTenantLifecycle,
+  expireTenant,
+  markPastDue,
+  activatePaid,
+  resolveTenantAccessState,
+  isTenantAccessStateAvailable,
+} from "./tenant-lifecycle.service";
 
 const log = pino({ name: "subscription" });
+
+function isSchemaCompatibilityError(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    (error.code === "P2021" || error.code === "P2022")
+  );
+}
 
 /**
  * Subscription state machine:
@@ -58,10 +74,14 @@ export async function transitionStatus(
 ): Promise<boolean> {
   assertSchoolScope(schoolId);
 
-  const school = await prisma.school.findUnique({ where: { id: schoolId } });
+  const snapshot = await resolveTenantAccessState(schoolId);
+  if (!snapshot) return false;
 
-  if (!school) return false;
-  const currentStatus = (school.subscriptionStatus ?? "trial") as SubStatus;
+  const currentStatus = snapshot.lifecycleState as SubStatus;
+  if (!(currentStatus in VALID_TRANSITIONS)) {
+    log.warn({ schoolId, currentStatus }, "Unsupported lifecycle state for transition");
+    return false;
+  }
 
   const allowed = VALID_TRANSITIONS[currentStatus];
   if (!allowed || !allowed.includes(newStatus)) {
@@ -69,41 +89,34 @@ export async function transitionStatus(
     return false;
   }
 
-  // Build safe update payload — never spread raw metadata
-  const safeData: Record<string, unknown> = {
-    subscriptionStatus: newStatus,
-  };
+  const safeData: Record<string, unknown> = {};
   for (const key of SUBSCRIPTION_SAFE_FIELDS) {
     if (key in metadata && metadata[key] !== undefined) {
       safeData[key] = metadata[key];
     }
   }
 
-  // Optimistic lock: only update if status hasn't changed since we read it
-  const result = await prisma.school.updateMany({
-    where: {
-      id: schoolId,
-      subscriptionStatus: currentStatus, // ← optimistic lock
-    },
-    data: safeData,
+  const outcome = await transitionTenantLifecycle({
+    schoolId,
+    targetLifecycle: newStatus,
+    accessState: newStatus === "expired" || newStatus === "cancelled" ? "blocked" : "active",
+    reason: typeof metadata.reason === "string" ? metadata.reason : undefined,
+    performedBy,
+    source: "subscription_service",
+    schoolUpdate: safeData,
   });
 
-  if (result.count === 0) {
-    log.warn(
-      { schoolId, currentStatus, newStatus },
-      "Subscription transition lost to concurrent update (optimistic lock)"
-    );
-    return false;
+  if (outcome.status === "applied" || outcome.status === "noop") {
+    await writeAuditLog("SUBSCRIPTION_STATUS_CHANGE", performedBy, schoolId, {
+      from: currentStatus,
+      to: newStatus,
+      reason: metadata?.reason,
+      plan: metadata?.plan,
+    });
+    return true;
   }
 
-  await writeAuditLog("SUBSCRIPTION_STATUS_CHANGE", performedBy, schoolId, {
-    from: currentStatus,
-    to: newStatus,
-    reason: metadata?.reason,
-    plan: metadata?.plan,
-  });
-
-  return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,21 +124,46 @@ export async function transitionStatus(
 // ---------------------------------------------------------------------------
 
 export async function processExpiredTrials(): Promise<number> {
-  const now = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  let trials: { id: string }[] = [];
+  let useFallback = !isTenantAccessStateAvailable();
 
-  const trials = await prisma.school.findMany({
-    where: {
-      subscriptionStatus: "trial",
-      trialEndDate: { lte: now },
-    },
-  });
+  if (!useFallback) {
+    try {
+      trials = await prisma.school.findMany({
+        where: {
+          tenantAccessState: { lifecycleState: "trial" },
+          trialEndDate: { lte: now },
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      if (!isSchemaCompatibilityError(error)) {
+        throw error;
+      }
+      log.warn({ err: error }, "Trial expiry worker falling back to school status");
+      useFallback = true;
+    }
+  }
+
+  if (useFallback) {
+    trials = await prisma.school.findMany({
+      where: {
+        subscriptionStatus: "trial",
+        trialEndDate: { lte: now },
+      },
+      select: { id: true },
+    });
+  }
 
   let count = 0;
   for (const school of trials) {
-    const success = await transitionStatus(school.id, "expired", {
-      expiredReason: "trial_ended",
+    const result = await expireTenant({
+      schoolId: school.id,
+      reason: "trial_ended",
+      source: "worker:trial-expiry",
     });
-    if (success) count++;
+    if (result.status === "applied") count++;
   }
 
   return count;
@@ -138,21 +176,48 @@ export async function processExpiredTrials(): Promise<number> {
 export async function processOverdueSubscriptions(): Promise<number> {
   const now = new Date();
 
-  const schools = await prisma.school.findMany({
-    where: {
-      subscriptionStatus: "active",
-      currentPeriodEnd: { lte: now },
-    },
-  });
+  let schools: { id: string; autoRenew: boolean; currentPeriodEnd: Date | null }[] = [];
+  let useFallback = !isTenantAccessStateAvailable();
+
+  if (!useFallback) {
+    try {
+      schools = await prisma.school.findMany({
+        where: {
+          tenantAccessState: { lifecycleState: "active" },
+          currentPeriodEnd: { lte: now },
+        },
+        select: { id: true, autoRenew: true, currentPeriodEnd: true },
+      });
+    } catch (error) {
+      if (!isSchemaCompatibilityError(error)) {
+        throw error;
+      }
+      log.warn({ err: error }, "Overdue worker falling back to school status");
+      useFallback = true;
+    }
+  }
+
+  if (useFallback) {
+    schools = await prisma.school.findMany({
+      where: {
+        subscriptionStatus: "active",
+        currentPeriodEnd: { lte: now },
+      },
+      select: { id: true, autoRenew: true, currentPeriodEnd: true },
+    });
+  }
 
   let count = 0;
   for (const school of schools) {
     if (school.autoRenew) continue;
 
-    const success = await transitionStatus(school.id, "past_due", {
-      overdueReason: "period_ended",
+    const result = await markPastDue({
+      schoolId: school.id,
+      periodEnd: school.currentPeriodEnd ?? null,
+      reason: "period_ended",
+      source: "worker:overdue-subscriptions",
     });
-    if (success) count++;
+    if (result.status === "applied") count++;
   }
 
   return count;
@@ -168,19 +233,45 @@ export async function processExpiredGrace(): Promise<number> {
   const graceMs = GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
   const cutoff = new Date(Date.now() - graceMs);
 
-  const schools = await prisma.school.findMany({
-    where: {
-      subscriptionStatus: "past_due",
-      currentPeriodEnd: { lte: cutoff },
-    },
-  });
+  let schools: { id: string; currentPeriodEnd: Date | null }[] = [];
+  let useFallback = !isTenantAccessStateAvailable();
+
+  if (!useFallback) {
+    try {
+      schools = await prisma.school.findMany({
+        where: {
+          tenantAccessState: { lifecycleState: "past_due" },
+          currentPeriodEnd: { lte: cutoff },
+        },
+        select: { id: true, currentPeriodEnd: true },
+      });
+    } catch (error) {
+      if (!isSchemaCompatibilityError(error)) {
+        throw error;
+      }
+      log.warn({ err: error }, "Grace expiry worker falling back to school status");
+      useFallback = true;
+    }
+  }
+
+  if (useFallback) {
+    schools = await prisma.school.findMany({
+      where: {
+        subscriptionStatus: "past_due",
+        currentPeriodEnd: { lte: cutoff },
+      },
+      select: { id: true, currentPeriodEnd: true },
+    });
+  }
 
   let count = 0;
   for (const school of schools) {
-    const success = await transitionStatus(school.id, "expired", {
-      expiredReason: "grace_period_ended",
+    const result = await expireTenant({
+      schoolId: school.id,
+      reason: "grace_period_ended",
+      source: "worker:grace-expiry",
     });
-    if (success) count++;
+    if (result.status === "applied") count++;
   }
 
   return count;
@@ -205,17 +296,24 @@ export async function cancelSubscription(
     throw new Error(`Cannot cancel subscription in '${status}' state`);
   }
 
-  const effectiveDate = school.currentPeriodEnd
-    ? school.currentPeriodEnd.toISOString().split("T")[0]
-    : new Date().toISOString().split("T")[0];
+  const effectiveDate = school.currentPeriodEnd ?? new Date();
+  const effectiveDateIso = effectiveDate.toISOString().split("T")[0];
 
-  await transitionStatus(schoolId, "cancelled", {
-    cancelledAt: new Date(),
-    cancelEffectiveDate: effectiveDate,
-    autoRenew: false,
-  }, performedBy);
+  await transitionTenantLifecycle({
+    schoolId,
+    targetLifecycle: "cancelled",
+    accessState: "active",
+    reason: "cancelled",
+    performedBy,
+    source: "subscription_cancel",
+    schoolUpdate: {
+      cancelledAt: new Date(),
+      cancelEffectiveDate: effectiveDate,
+      autoRenew: false,
+    },
+  });
 
-  return { cancelEffectiveDate: effectiveDate };
+  return { cancelEffectiveDate: effectiveDateIso };
 }
 
 // ---------------------------------------------------------------------------
@@ -233,11 +331,14 @@ export async function reactivateSubscription(
   const now = new Date();
   const periodEnd = new Date(now.getTime() + periodDays * 24 * 60 * 60 * 1000);
 
-  await transitionStatus(schoolId, "active", {
-    subscriptionPlan: plan,
-    currentPeriodStart: now,
-    currentPeriodEnd: periodEnd,
+  await activatePaid({
+    schoolId,
+    plan,
+    periodStart: now,
+    periodEnd,
     autoRenew: true,
-    paymentFailureCount: 0,
-  }, performedBy);
+    performedBy,
+    reason: "reactivated",
+    source: "subscription_reactivate",
+  });
 }

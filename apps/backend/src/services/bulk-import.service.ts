@@ -7,7 +7,12 @@ import { writeAuditLog } from "./audit.service";
 import { z } from "zod";
 import { dateTimeFrom, moneyFromInput, moneyToNumber } from "../utils/safe-fields";
 import { assertSchoolScope } from "../lib/tenant-scope";
-import { enforcePlanLimit } from "./plan-limit.service";
+import {
+  reserveCapacity,
+  consumeReservedCapacity,
+  releaseReservedCapacity,
+  reconcileUsageCounters,
+} from "./quota.service";
 
 export interface ImportError { row: number; field?: string; message: string; }
 export interface ImportResult { total: number; imported: number; skipped: number; errors: ImportError[]; createdIds: string[]; }
@@ -77,54 +82,106 @@ export async function bulkImport(params: { entityType: EntityType; schoolId: str
 
   if (validRows.length === 0) return { total: rows.length, imported: 0, skipped: rows.length, errors, createdIds: [] };
 
+  let reservedAmount = 0;
+  let succeeded = 0;
+
   if (entityType === "students" || entityType === "teachers") {
-    await enforcePlanLimit(entityType, schoolId, validRows.length);
+    await reserveCapacity({
+      schoolId,
+      resourceType: entityType,
+      amount: validRows.length,
+    });
+    reservedAmount = validRows.length;
   }
 
   // Batch insert via Prisma
   const createdIds: string[] = [];
 
-  for (const row of validRows) {
-    try {
-      let record: any;
-      switch (entityType) {
-        case "students":
-          record = await prisma.student.create({ data: { ...row.data as any, schoolId, isDeleted: false } });
-          break;
-        case "teachers":
-          record = await prisma.teacher.create({ data: { ...row.data as any, schoolId, isDeleted: false } });
-          break;
-        case "fees":
-          {
-            const feeRow = row.data as { amount: number; dueDate: string } & Record<string, unknown>;
-            const dueDate = dateTimeFrom(feeRow.dueDate);
-            if (!dueDate) {
-              throw new Error("Invalid dueDate format");
-            }
+  try {
+    for (const row of validRows) {
+      try {
+        let record: any;
+        switch (entityType) {
+          case "students":
+            record = await prisma.student.create({ data: { ...row.data as any, schoolId, isDeleted: false } });
+            break;
+          case "teachers":
+            record = await prisma.teacher.create({ data: { ...row.data as any, schoolId, isDeleted: false } });
+            break;
+          case "fees":
+            {
+              const feeRow = row.data as { amount: number; dueDate: string } & Record<string, unknown>;
+              const dueDate = dateTimeFrom(feeRow.dueDate);
+              if (!dueDate) {
+                throw new Error("Invalid dueDate format");
+              }
 
-            record = await prisma.fee.create({
-              data: {
-                ...feeRow as any,
-                schoolId,
-                amount: moneyFromInput(feeRow.amount),
-                dueDate,
-              },
-            });
-          }
-          break;
-        case "attendance":
-          record = await prisma.attendance.create({ data: { ...row.data as any, schoolId, markedBy: userId } });
-          break;
+              record = await prisma.fee.create({
+                data: {
+                  ...feeRow as any,
+                  schoolId,
+                  amount: moneyFromInput(feeRow.amount),
+                  dueDate,
+                },
+              });
+            }
+            break;
+          case "attendance":
+            record = await prisma.attendance.create({ data: { ...row.data as any, schoolId, markedBy: userId } });
+            break;
+        }
+        if (record?.id) {
+          createdIds.push(record.id);
+          succeeded += 1;
+        }
+      } catch (err: any) {
+        errors.push({ row: row.index, message: err.message ?? "Database insert failed" });
       }
-      if (record?.id) createdIds.push(record.id);
-    } catch (err: any) {
-      errors.push({ row: row.index, message: err.message ?? "Database insert failed" });
+    }
+  } catch (err) {
+    if (reservedAmount > 0) {
+      const releaseAmount = Math.max(reservedAmount - succeeded, 0);
+      if (releaseAmount > 0) {
+        await releaseReservedCapacity({
+          schoolId,
+          resourceType: entityType as "students" | "teachers",
+          amount: releaseAmount,
+        });
+      }
+    }
+    throw err;
+  }
+
+  if (reservedAmount > 0) {
+    if (succeeded > 0) {
+      await consumeReservedCapacity({
+        schoolId,
+        resourceType: entityType as "students" | "teachers",
+        amount: succeeded,
+      });
+    }
+
+    const releaseAmount = Math.max(reservedAmount - succeeded, 0);
+    if (releaseAmount > 0) {
+      await releaseReservedCapacity({
+        schoolId,
+        resourceType: entityType as "students" | "teachers",
+        amount: releaseAmount,
+      });
     }
   }
 
   await writeAuditLog(`BULK_IMPORT_${entityType.toUpperCase()}`, userId, schoolId, {
     totalRows: rows.length, imported: createdIds.length, skipped: rows.length - createdIds.length, errorCount: errors.length,
   });
+
+  if ((entityType === "students" || entityType === "teachers") && errors.length > 0) {
+    try {
+      await reconcileUsageCounters({ schoolIds: [schoolId], mode: "report" });
+    } catch {
+      // Reconciliation is best-effort; import results should still return.
+    }
+  }
 
   return { total: rows.length, imported: createdIds.length, skipped: rows.length - createdIds.length, errors, createdIds };
 }

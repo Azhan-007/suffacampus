@@ -1,18 +1,17 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { prisma } from "../lib/prisma";
-import { Errors } from "../errors";
+import { AppError } from "../errors";
 import type { CacheService } from "../plugins/cache";
-import {
-  assertSchoolScope,
-  resolveStudentLimitForPlan,
-  resolveTeacherLimitForPlan,
-} from "../lib/tenant-scope";
+import { assertSchoolScope } from "../lib/tenant-scope";
+import { validateQuota } from "../services/quota.service";
 
 interface SchoolSubscription {
   subscriptionPlan: string;
   maxStudents: number;
   maxTeachers: number;
   maxStorage: number;
+  currentStudents: number;
+  currentTeachers: number;
   currentStorage: number;
 }
 
@@ -55,6 +54,8 @@ export async function enforceSubscription(
           maxStudents: true,
           maxTeachers: true,
           maxStorage: true,
+          currentStudents: true,
+          currentTeachers: true,
           currentStorage: true,
         },
       });
@@ -69,6 +70,8 @@ export async function enforceSubscription(
         maxStudents: schoolRow.maxStudents,
         maxTeachers: schoolRow.maxTeachers,
         maxStorage: schoolRow.maxStorage,
+        currentStudents: schoolRow.currentStudents ?? 0,
+        currentTeachers: schoolRow.currentTeachers ?? 0,
         currentStorage: schoolRow.currentStorage,
       };
       cache?.set("school", schoolId, school);
@@ -86,74 +89,48 @@ export async function enforceSubscription(
     return;
   }
 
-  const limitByResource: Record<LimitedResource, number> = {
-    students: resolveStudentLimitForPlan(
-      school.subscriptionPlan,
-      school.maxStudents
-    ),
-    teachers: resolveTeacherLimitForPlan(
-      school.subscriptionPlan,
-      school.maxTeachers
-    ),
-    storage: school.maxStorage ?? 0,
-  };
-
-  const selectedLimit = limitByResource[resource];
-
-  // 2. Skip for unlimited plans
-  if (selectedLimit === -1) {
-    request.log.info(
-      { schoolId, plan: school.subscriptionPlan, resource },
-      "Subscription check skipped — unlimited plan"
-    );
-    return;
-  }
-
-  // 3. Count current usage via Prisma
-  let currentUsage: number;
   try {
-    if (resource === "students") {
-      currentUsage = await prisma.student.count({
-        where: { schoolId, isDeleted: false },
-      });
-    } else if (resource === "teachers") {
-      currentUsage = await prisma.teacher.count({
-        where: { schoolId, isDeleted: false },
-      });
-    } else {
-      currentUsage = school.currentStorage ?? 0;
-    }
+    const validation = await validateQuota({
+      schoolId,
+      resourceType: resource,
+      incoming: 1,
+      schoolSnapshot: {
+        subscriptionPlan: school.subscriptionPlan,
+        maxStudents: school.maxStudents,
+        maxTeachers: school.maxTeachers,
+        maxStorage: school.maxStorage,
+        currentStudents: school.currentStudents ?? 0,
+        currentTeachers: school.currentTeachers ?? 0,
+        currentStorage: school.currentStorage ?? 0,
+      },
+    });
+
+    request.log.info(
+      {
+        schoolId,
+        plan: school.subscriptionPlan,
+        resource,
+        used: validation.used,
+        reserved: validation.reserved,
+        limit: validation.limit,
+        source: validation.source,
+        stale: validation.stale,
+      },
+      "Subscription check passed"
+    );
   } catch (err) {
-    request.log.error({ err, schoolId, resource }, "Failed to count usage");
+    request.log.error(
+      { err, schoolId, plan: school.subscriptionPlan, resource },
+      "Subscription check failed"
+    );
+
+    if (err instanceof AppError) {
+      throw err;
+    }
+
     return reply.status(500).send({
       code: "INTERNAL_ERROR",
       message: "Something went wrong",
     });
   }
-
-  // 4. Enforce the limit
-  if (currentUsage >= selectedLimit) {
-    request.log.warn(
-      {
-        schoolId,
-        plan: school.subscriptionPlan,
-        resource,
-        currentUsage,
-        selectedLimit,
-      },
-      "Subscription limit reached"
-    );
-    throw Errors.subscriptionLimitReached(resource, selectedLimit);
-  }
-
-  request.log.info(
-    {
-      schoolId,
-      plan: school.subscriptionPlan,
-      resource,
-      currentUsage,
-      selectedLimit,
-    },
-    "Subscription check passed"
-  );
 }

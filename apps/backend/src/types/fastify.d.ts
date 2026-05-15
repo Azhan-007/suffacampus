@@ -43,6 +43,14 @@ declare module "fastify" {
       userAgent?: string | null;
       lastActiveAt?: string;
       expiresAt?: string;
+      accessVersion?: number;
+    };
+    /** Tenant access snapshot (set by tenant middleware) */
+    tenantAccess?: {
+      accessState: string;
+      lifecycleState: string;
+      accessVersion: number;
+      effectiveUntil?: Date | null;
     };
   }
 

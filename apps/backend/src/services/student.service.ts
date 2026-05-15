@@ -8,7 +8,7 @@ import { createLogger } from "../utils/logger";
 import {
   assertSchoolScope,
 } from "../lib/tenant-scope";
-import { enforcePlanLimit } from "./plan-limit.service";
+import { reserveCapacity, consumeReservedCapacity } from "./quota.service";
 
 const log = createLogger("student-service");
 
@@ -196,56 +196,72 @@ export async function createStudent(
   performedBy: string
 ) {
   assertSchoolScope(schoolId);
-  // Note: enforcePlanLimit is already handled by the enforceSubscription middleware
-
-  const student = await prisma.student.create({
-    data: {
+  const student = await prisma.$transaction(async (tx) => {
+    await reserveCapacity({
       schoolId,
-      firstName: data.firstName,
-      lastName: data.lastName,
-      classId: data.classId,
-      sectionId: data.sectionId,
-      rollNumber: data.rollNumber,
-      parentPhone: data.parentPhone,
-      gender: data.gender as any,
-      photoURL: data.photoURL,
-      email: data.email,
-      phone: data.phone,
-      alternatePhone: data.alternatePhone,
-      dateOfBirth: data.dateOfBirth,
-      bloodGroup: data.bloodGroup,
-      nationality: data.nationality,
-      religion: data.religion,
-      address: data.address,
-      city: data.city,
-      state: data.state,
-      postalCode: data.postalCode,
-      emergencyContact: data.emergencyContact,
-      emergencyContactName: data.emergencyContactName,
-      emergencyRelation: data.emergencyRelation,
-      medicalConditions: data.medicalConditions,
-      allergies: data.allergies,
-      previousSchool: data.previousSchool,
-      admissionDate: data.admissionDate,
-      fatherName: data.fatherName,
-      fatherPhone: data.fatherPhone,
-      fatherEmail: data.fatherEmail,
-      fatherOccupation: data.fatherOccupation,
-      fatherWorkplace: data.fatherWorkplace,
-      motherName: data.motherName,
-      motherPhone: data.motherPhone,
-      motherEmail: data.motherEmail,
-      motherOccupation: data.motherOccupation,
-      motherWorkplace: data.motherWorkplace,
-      guardianName: data.guardianName,
-      guardianRelation: data.guardianRelation,
-      guardianPhone: data.guardianPhone,
-      guardianEmail: data.guardianEmail,
-      parentEmail: data.parentEmail,
-      enrollmentDate: data.enrollmentDate,
-      isActive: data.isActive,
-      isDeleted: false,
-    },
+      resourceType: "students",
+      amount: 1,
+      useTransaction: tx,
+    });
+
+    const created = await tx.student.create({
+      data: {
+        schoolId,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        classId: data.classId,
+        sectionId: data.sectionId,
+        rollNumber: data.rollNumber,
+        parentPhone: data.parentPhone,
+        gender: data.gender as any,
+        photoURL: data.photoURL,
+        email: data.email,
+        phone: data.phone,
+        alternatePhone: data.alternatePhone,
+        dateOfBirth: data.dateOfBirth,
+        bloodGroup: data.bloodGroup,
+        nationality: data.nationality,
+        religion: data.religion,
+        address: data.address,
+        city: data.city,
+        state: data.state,
+        postalCode: data.postalCode,
+        emergencyContact: data.emergencyContact,
+        emergencyContactName: data.emergencyContactName,
+        emergencyRelation: data.emergencyRelation,
+        medicalConditions: data.medicalConditions,
+        allergies: data.allergies,
+        previousSchool: data.previousSchool,
+        admissionDate: data.admissionDate,
+        fatherName: data.fatherName,
+        fatherPhone: data.fatherPhone,
+        fatherEmail: data.fatherEmail,
+        fatherOccupation: data.fatherOccupation,
+        fatherWorkplace: data.fatherWorkplace,
+        motherName: data.motherName,
+        motherPhone: data.motherPhone,
+        motherEmail: data.motherEmail,
+        motherOccupation: data.motherOccupation,
+        motherWorkplace: data.motherWorkplace,
+        guardianName: data.guardianName,
+        guardianRelation: data.guardianRelation,
+        guardianPhone: data.guardianPhone,
+        guardianEmail: data.guardianEmail,
+        parentEmail: data.parentEmail,
+        enrollmentDate: data.enrollmentDate,
+        isActive: data.isActive,
+        isDeleted: false,
+      },
+    });
+
+    await consumeReservedCapacity({
+      schoolId,
+      resourceType: "students",
+      amount: 1,
+      useTransaction: tx,
+    });
+
+    return created;
   });
 
   // Pre-compute credentials so we can return them immediately

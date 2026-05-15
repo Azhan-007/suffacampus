@@ -12,6 +12,14 @@ import {
   resolveStudentLimitForPlan,
   resolveTeacherLimitForPlan,
 } from "../lib/tenant-scope";
+import {
+  createTenantAccessState,
+  suspendTenant,
+  reactivateTenant,
+  transitionTenantLifecycle,
+  deriveTenantAccessSeed,
+  isTenantAccessStateAvailable,
+} from "./tenant-lifecycle.service";
 
 const log = createLogger("admin-school-service");
 
@@ -710,10 +718,43 @@ export async function createSchool(
   };
 
   let school: Record<string, unknown>;
+  let accessStateBootstrapped = false;
   try {
-    const created = await prisma.school.create({
-      data: createPayload as Prisma.SchoolCreateInput,
+    const created = await prisma.$transaction(async (tx) => {
+      const createdSchool = await tx.school.create({
+        data: createPayload as Prisma.SchoolCreateInput,
+      });
+
+      const seed = deriveTenantAccessSeed({
+        subscriptionStatus: createdSchool.subscriptionStatus ?? initialStatus,
+        trialEndDate: createdSchool.trialEndDate ?? trialEndDate,
+        currentPeriodEnd: createdSchool.currentPeriodEnd ?? subscriptionEndDate ?? null,
+        cancelEffectiveDate: createdSchool.cancelEffectiveDate ?? null,
+        isActive: createdSchool.isActive ?? true,
+      });
+
+      const access = await createTenantAccessState({
+        schoolId: createdSchool.id,
+        lifecycleState: seed.lifecycleState,
+        accessState: seed.accessState,
+        reason: "school_bootstrap",
+        effectiveUntil: seed.effectiveUntil,
+        performedBy,
+        source: "school_provisioning",
+        useTransaction: tx,
+      });
+
+      if (access) {
+        accessStateBootstrapped = true;
+      }
+
+      if (isTenantAccessStateAvailable() && !access) {
+        throw Errors.internal("Failed to bootstrap tenant access state");
+      }
+
+      return createdSchool;
     });
+
     school = created as unknown as Record<string, unknown>;
   } catch (error) {
     if (!isSchemaCompatibilityError(error)) {
@@ -731,6 +772,8 @@ export async function createSchool(
   const schoolCode = typeof school.code === "string" ? school.code : code;
   const schoolPlan =
     typeof school.subscriptionPlan === "string" ? school.subscriptionPlan : initialPlan;
+  const schoolStatus =
+    typeof school.subscriptionStatus === "string" ? school.subscriptionStatus : initialStatus;
   const schoolAutoRenew =
     typeof school.autoRenew === "boolean" ? school.autoRenew : false;
   const schoolCurrency =
@@ -755,6 +798,43 @@ export async function createSchool(
     maxStudents,
     maxTeachers,
   });
+
+  if (!accessStateBootstrapped && isTenantAccessStateAvailable()) {
+    const effectiveTrialEnd =
+      school.trialEndDate instanceof Date ? school.trialEndDate : trialEndDate;
+    const effectivePeriodEnd =
+      school.currentPeriodEnd instanceof Date
+        ? school.currentPeriodEnd
+        : school.subscriptionEndDate instanceof Date
+          ? school.subscriptionEndDate
+          : subscriptionEndDate ?? null;
+    const effectiveCancelDate =
+      school.cancelEffectiveDate instanceof Date ? school.cancelEffectiveDate : null;
+
+    const seed = deriveTenantAccessSeed({
+      subscriptionStatus: schoolStatus,
+      trialEndDate: effectiveTrialEnd,
+      currentPeriodEnd: effectivePeriodEnd,
+      cancelEffectiveDate: effectiveCancelDate,
+      isActive: typeof school.isActive === "boolean" ? school.isActive : true,
+    });
+
+    try {
+      const access = await createTenantAccessState({
+        schoolId,
+        lifecycleState: seed.lifecycleState,
+        accessState: seed.accessState,
+        reason: "school_bootstrap",
+        effectiveUntil: seed.effectiveUntil,
+        performedBy,
+        source: "school_provisioning",
+      });
+
+      accessStateBootstrapped = Boolean(access);
+    } catch (error) {
+      log.warn({ err: error, schoolId }, "Failed to bootstrap tenant access state");
+    }
+  }
 
   try {
     await writeAuditLog("CREATE_SCHOOL", performedBy, schoolId, {
@@ -933,9 +1013,54 @@ export async function updateSchool(
   const existing = await prisma.school.findUnique({ where: { id: schoolId } });
   if (!existing) throw Errors.notFound("School", schoolId);
 
-  const updated = await prisma.school.update({
-    where: { id: schoolId },
-    data: data as any,
+  const { subscriptionStatus, isActive, ...rest } = data as UpdateSchoolAdminInput & {
+    subscriptionStatus?: string;
+    isActive?: boolean;
+  };
+
+  const updatePayload = rest as Record<string, unknown>;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    if (isActive === false && existing.isActive !== false) {
+      await suspendTenant({
+        schoolId,
+        performedBy,
+        reason: "admin_deactivated",
+        source: "admin_update",
+        useTransaction: tx,
+      });
+    } else if (typeof subscriptionStatus === "string") {
+      await transitionTenantLifecycle({
+        schoolId,
+        targetLifecycle: subscriptionStatus as any,
+        accessState:
+          subscriptionStatus === "expired" || subscriptionStatus === "cancelled"
+            ? "blocked"
+            : "active",
+        reason: "admin_status_override",
+        performedBy,
+        source: "admin_update",
+        useTransaction: tx,
+      });
+    } else if (isActive === true && existing.isActive === false) {
+      await reactivateTenant({
+        schoolId,
+        performedBy,
+        reason: "admin_reactivated",
+        source: "admin_update",
+        useTransaction: tx,
+      });
+    }
+
+    if (Object.keys(updatePayload).length > 0) {
+      return tx.school.update({
+        where: { id: schoolId },
+        data: updatePayload as any,
+      });
+    }
+
+    const refreshed = await tx.school.findUnique({ where: { id: schoolId } });
+    return refreshed ?? existing;
   });
 
   await writeAuditLog("UPDATE_SCHOOL", performedBy, schoolId, {
@@ -954,10 +1079,19 @@ export async function softDeleteSchool(
   const school = await prisma.school.findUnique({ where: { id: schoolId } });
   if (!school || !school.isActive) return false;
 
-  await prisma.school.update({
-    where: { id: schoolId },
-    data: { isActive: false },
+  const result = await suspendTenant({
+    schoolId,
+    performedBy,
+    reason: "manual_deactivation",
+    source: "admin_soft_delete",
   });
+
+  if (result.status === "missing") {
+    await prisma.school.update({
+      where: { id: schoolId },
+      data: { isActive: false },
+    });
+  }
 
   await writeAuditLog("DELETE_SCHOOL", performedBy, schoolId, {
     schoolName: school.name,
