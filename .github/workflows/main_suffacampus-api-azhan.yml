@@ -40,12 +40,30 @@ jobs:
         working-directory: apps/backend
         run: npm run build
 
+      # ── Supabase migration safety: resolve any previously failed migrations ──
+      # Prisma records a failed migration in _prisma_migrations and blocks all
+      # subsequent deploys until it is explicitly resolved. These two migrations
+      # were hand-written and had SQL that failed on the first CI run. They have
+      # since been fixed with full IF NOT EXISTS guards. This step marks them as
+      # rolled-back so Prisma will retry them cleanly with the corrected SQL.
+      # This is a no-op if the migrations are already in a clean state.
+      - name: Resolve previously failed migrations (Supabase safety)
+        working-directory: apps/backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          echo "Resolving any previously failed migrations..."
+          npx prisma migrate resolve --rolled-back "20260514170000_add_webhook_event_durability" 2>/dev/null && echo "Resolved 20260514170000" || echo "20260514170000 not in failed state (OK)"
+          npx prisma migrate resolve --rolled-back "20260515160000_add_reconciliation_drift_recovery" 2>/dev/null && echo "Resolved 20260515160000" || echo "20260515160000 not in failed state (OK)"
+
       - name: Run database migrations
         working-directory: apps/backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
         run: npx prisma migrate deploy
+
 
       - name: Prune dev dependencies
         working-directory: apps/backend
