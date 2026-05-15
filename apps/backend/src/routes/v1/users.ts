@@ -15,7 +15,7 @@ import { sendSuccess, sendPaginated } from "../../utils/response";
 import { Errors } from "../../errors";
 import { writeAuditLog } from "../../services/audit.service";
 
-const preHandler = [authenticate, tenantGuard, roleMiddleware(["Admin"])];
+const preHandler = [authenticate, tenantGuard, roleMiddleware(["Admin", "SuperAdmin"])];
 
 export default async function userRoutes(server: FastifyInstance) {
   // POST /users — create a user (Admin/SuperAdmin only)

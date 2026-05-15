@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { Errors } from "../errors";
 import { getTenantContext } from "./tenant-context";
 
@@ -35,6 +35,8 @@ const TENANT_SCOPED_MODELS = new Set<string>([
   "ParentInvite",
   "DeviceToken",
   "LegacyPayment",
+  "InvoiceSequence",
+  "PaymentActivationLedger",
   "Notification",
   "NotificationPreference",
   "AuditLog",
@@ -137,6 +139,27 @@ async function ensureTenantRecordOwnership(
   }
 }
 
+async function ensureMutableInvoiceRecord(
+  basePrisma: PrismaClient,
+  where: unknown,
+  schoolId: string
+): Promise<void> {
+  const delegate = (basePrisma as Record<string, any>).invoice;
+  if (!delegate) return;
+
+  const immutable = await delegate.findFirst({
+    where: {
+      ...mergeWhereWithSchoolId(where, schoolId),
+      immutableAt: { not: null },
+    },
+    select: { id: true },
+  });
+
+  if (immutable) {
+    throw Errors.conflict("Finalized invoices are immutable");
+  }
+}
+
 function withPoolTuning(databaseUrl?: string): string | undefined {
   if (!databaseUrl) return undefined;
 
@@ -211,6 +234,9 @@ export const prisma = basePrisma.$extends({
           case "groupBy":
           case "updateMany":
           case "deleteMany": {
+            if (model === "Invoice" && (operation === "updateMany" || operation === "deleteMany")) {
+              await ensureMutableInvoiceRecord(basePrisma, mutableArgs.where, schoolId);
+            }
             return query({
               ...mutableArgs,
               where: mergeWhereWithSchoolId(mutableArgs.where, schoolId),
@@ -253,6 +279,9 @@ export const prisma = basePrisma.$extends({
 
           case "update": {
             await ensureTenantRecordOwnership(basePrisma, model, mutableArgs.where, schoolId);
+            if (model === "Invoice") {
+              await ensureMutableInvoiceRecord(basePrisma, mutableArgs.where, schoolId);
+            }
             return query({
               ...mutableArgs,
               data: enforceUpdateDataSchoolId(mutableArgs.data, schoolId),
@@ -261,6 +290,9 @@ export const prisma = basePrisma.$extends({
 
           case "delete": {
             await ensureTenantRecordOwnership(basePrisma, model, mutableArgs.where, schoolId);
+            if (model === "Invoice") {
+              await ensureMutableInvoiceRecord(basePrisma, mutableArgs.where, schoolId);
+            }
             return query(mutableArgs);
           }
 
@@ -294,3 +326,8 @@ export const prisma = basePrisma.$extends({
     },
   },
 });
+
+export type PrismaTransactionClient =
+  Parameters<typeof prisma.$transaction>[0] extends (tx: infer T) => any
+    ? T
+    : Prisma.TransactionClient;

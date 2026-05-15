@@ -21,6 +21,18 @@ jest.mock("../../src/services/audit.service", () => ({
   writeAuditLog: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("../../src/services/tenant-lifecycle.service", () => ({
+  resolveTenantAccessState: jest.fn().mockResolvedValue({
+    schoolId: "school_1",
+    accessState: "active",
+    lifecycleState: "active",
+    accessVersion: 1,
+    effectiveUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  }),
+  isAccessExpiredSnapshot: jest.fn(() => false),
+  queueExpiryFailsafe: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock("../../src/services/payment.service", () => ({
   createOrder: jest.fn().mockResolvedValue({
     id: "order_mock_123",
@@ -43,6 +55,16 @@ const paymentServiceMock = jest.requireMock("../../src/services/payment.service"
   normalizePlanCode: jest.Mock;
   resolveSubscriptionAmountPaise: jest.Mock;
   verifyPaymentAndPersist: jest.Mock;
+};
+
+const prismaMock = jest.requireMock("../../src/lib/prisma") as {
+  prisma: {
+    legacyPayment: {
+      findFirst: jest.Mock;
+      update: jest.Mock;
+      create: jest.Mock;
+    };
+  };
 };
 
 jest.mock("../../src/lib/prisma", () => {
@@ -261,5 +283,80 @@ describe("POST /payments/verify", () => {
     });
 
     expect(res.statusCode).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /payments/refund
+// ---------------------------------------------------------------------------
+describe("POST /payments/refund", () => {
+  it("refunds a payment successfully", async () => {
+    setupAuthUser();
+    seedSchool();
+
+    prismaMock.prisma.legacyPayment.findFirst.mockResolvedValueOnce({
+      id: "payment_123",
+      schoolId: "school_1",
+      amount: 50000,
+      status: "completed",
+    });
+    prismaMock.prisma.legacyPayment.update.mockResolvedValueOnce({
+      id: "payment_123",
+      status: "refunded",
+      refundedAmount: 50000,
+    });
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/payments/refund",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        paymentId: "payment_123",
+        amount: 50000,
+        reason: "duplicate charge",
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(body.data.success).toBe(true);
+    expect(body.data.refundId).toBe("rfnd_payment_123");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /payments (manual/student fee payment record)
+// ---------------------------------------------------------------------------
+describe("POST /payments", () => {
+  it("records a student fee payment successfully", async () => {
+    setupAuthUser();
+    seedSchool();
+
+    prismaMock.prisma.legacyPayment.create.mockResolvedValueOnce({
+      id: "payment_fee_1",
+      amount: 1200,
+      method: "upi",
+      status: "completed",
+    });
+
+    const res = await server.inject({
+      method: "POST",
+      url: "/payments",
+      headers: { authorization: "Bearer token" },
+      payload: {
+        studentId: "student_1",
+        feeId: "fee_1",
+        amount: 1200,
+        method: "upi",
+        status: "Paid",
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(true);
+    expect(body.data.id).toBe("payment_fee_1");
+    expect(body.data.status).toBe("completed");
   });
 });

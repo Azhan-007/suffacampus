@@ -12,6 +12,7 @@ import { tenantGuard } from "../../src/middleware/tenant";
 import { roleMiddleware } from "../../src/middleware/role";
 import { requirePermission } from "../../src/middleware/permission";
 import { validateSessionAccessToken } from "../../src/services/session.service";
+import { resetTenantAccessCompatibilityCache } from "../../src/services/tenant-lifecycle.service";
 import {
   auth,
   resetFirestoreMock,
@@ -22,6 +23,38 @@ import { AppError } from "../../src/errors";
 jest.mock("../../src/services/session.service", () => ({
   validateSessionAccessToken: jest.fn().mockResolvedValue(null),
 }));
+
+const mockState = {
+  schools: new Map<string, any>(),
+  access: new Map<string, any>(),
+};
+
+function seedSchool(id: string, overrides: Record<string, unknown> = {}) {
+  mockState.schools.set(id, {
+    id,
+    subscriptionStatus: "active",
+    isActive: true,
+    trialEndDate: null,
+    currentPeriodEnd: null,
+    cancelEffectiveDate: null,
+    ...overrides,
+  });
+}
+
+function seedAccess(id: string, overrides: Record<string, unknown> = {}) {
+  mockState.access.set(id, {
+    id: `tas_${id}`,
+    schoolId: id,
+    accessState: "active",
+    lifecycleState: "active",
+    reason: null,
+    effectiveUntil: null,
+    accessVersion: 0,
+    version: 1,
+    lastTransitionAt: new Date(),
+    ...overrides,
+  });
+}
 
 jest.mock("../../src/lib/prisma", () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -50,6 +83,22 @@ jest.mock("../../src/lib/prisma", () => {
           };
         }),
       },
+      tenantAccessState: {
+        findUnique: jest.fn(async ({ where: { schoolId } }: { where: { schoolId: string } }) =>
+          mockState.access.get(schoolId) ?? null
+        ),
+      },
+      school: {
+        findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
+          mockState.schools.get(id) ?? null
+        ),
+        updateMany: jest.fn(async ({ where: { id }, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+          const row = mockState.schools.get(id);
+          if (!row) return { count: 0 };
+          mockState.schools.set(id, { ...row, ...data });
+          return { count: 1 };
+        }),
+      },
     },
   };
 });
@@ -65,6 +114,9 @@ const mockValidateSessionAccessToken =
 
 beforeEach(async () => {
   resetFirestoreMock();
+  mockState.schools.clear();
+  mockState.access.clear();
+  resetTenantAccessCompatibilityCache();
   mockVerifyIdToken.mockReset();
   mockValidateSessionAccessToken.mockReset();
   mockValidateSessionAccessToken.mockResolvedValue(null);
@@ -343,6 +395,7 @@ describe("tenantGuard middleware", () => {
       role: "Admin",
       schoolId: "school_abc",
     });
+    seedSchool("school_abc");
 
     const res = await server.inject({
       method: "GET",
@@ -374,6 +427,96 @@ describe("tenantGuard middleware", () => {
     expect(res.statusCode).toBe(403);
     const body = JSON.parse(res.body);
     expect(body.error.code).toBe("TENANT_MISSING");
+  });
+
+  it("blocks access when tenant is suspended", async () => {
+    mockVerifyIdToken.mockResolvedValueOnce({
+      uid: "user_2",
+      email: "admin@school.com",
+    });
+    seedDoc("users", "user_2", {
+      uid: "user_2",
+      email: "admin@school.com",
+      role: "Admin",
+      schoolId: "school_blocked",
+    });
+    seedSchool("school_blocked");
+    seedAccess("school_blocked", { accessState: "blocked", lifecycleState: "suspended" });
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/test",
+      headers: { authorization: "Bearer valid_token" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe("SUBSCRIPTION_EXPIRED");
+  });
+
+  it("denies access when trial is past effectiveUntil", async () => {
+    mockVerifyIdToken.mockResolvedValueOnce({
+      uid: "user_3",
+      email: "admin@school.com",
+    });
+    seedDoc("users", "user_3", {
+      uid: "user_3",
+      email: "admin@school.com",
+      role: "Admin",
+      schoolId: "school_trial",
+    });
+    seedSchool("school_trial");
+    seedAccess("school_trial", {
+      lifecycleState: "trial",
+      accessState: "active",
+      effectiveUntil: new Date(Date.now() - 60_000),
+    });
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/test",
+      headers: { authorization: "Bearer valid_token" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe("SUBSCRIPTION_EXPIRED");
+  });
+
+  it("rejects session JWT when accessVersion is stale", async () => {
+    mockValidateSessionAccessToken.mockResolvedValueOnce({
+      id: "sess_10",
+      userUid: "user_10",
+      schoolId: "school_versioned",
+      jti: "jti_10",
+      device: "Web",
+      ipAddress: "127.0.0.1",
+      userAgent: "Jest",
+      lastActiveAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+      accessVersion: 1,
+    });
+
+    seedDoc("users", "user_10", {
+      uid: "user_10",
+      email: "admin@school.com",
+      role: "Admin",
+      schoolId: "school_versioned",
+      isActive: true,
+    });
+
+    seedSchool("school_versioned");
+    seedAccess("school_versioned", { accessVersion: 2 });
+
+    const res = await server.inject({
+      method: "GET",
+      url: "/test",
+      headers: { authorization: "Bearer session_jwt" },
+    });
+
+    expect(res.statusCode).toBe(401);
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe("AUTH_TOKEN_INVALID");
   });
 });
 
@@ -411,6 +554,7 @@ describe("roleMiddleware", () => {
       role,
       schoolId: "school_1",
     });
+    seedSchool("school_1");
   }
 
   it("allows Admin access to admin-only route", async () => {

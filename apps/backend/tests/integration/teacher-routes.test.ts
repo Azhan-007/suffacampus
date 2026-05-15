@@ -21,8 +21,8 @@ const mockState = {
   teacherCounter: 1,
 };
 
-jest.mock("../../src/lib/prisma", () => ({
-  prisma: {
+jest.mock("../../src/lib/prisma", () => {
+  const prisma = {
     user: {
       findUnique: jest.fn(async () => null),
       upsert: jest.fn(async ({ where: { uid }, update, create }) => {
@@ -165,8 +165,15 @@ jest.mock("../../src/lib/prisma", () => ({
         return { count: data.length };
       }),
     },
-  },
-}));
+  };
+
+  return {
+    prisma: {
+      ...prisma,
+      $transaction: jest.fn(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)),
+    },
+  };
+});
 
 // Mock audit service
 jest.mock("../../src/services/audit.service", () => ({

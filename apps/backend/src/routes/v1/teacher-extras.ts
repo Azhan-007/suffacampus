@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { authenticate } from "../../middleware/auth";
 import { tenantGuard } from "../../middleware/tenant";
+import { roleMiddleware } from "../../middleware/role";
 import { sendSuccess } from "../../utils/response";
 import { prisma } from "../../lib/prisma";
 
@@ -9,7 +10,7 @@ import { prisma } from "../../lib/prisma";
  * Provides real data from the database instead of empty stubs.
  */
 export default async function teacherExtrasRoutes(server: FastifyInstance) {
-  const preHandler = [authenticate, tenantGuard];
+  const preHandler = [authenticate, tenantGuard, roleMiddleware(["Teacher", "Admin", "SuperAdmin"])];
 
   /**
    * GET /teacher-tasks — pending tasks for the logged-in teacher.

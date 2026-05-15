@@ -14,6 +14,7 @@ import {
 import { authenticate } from "../../middleware/auth";
 import { tenantGuard } from "../../middleware/tenant";
 import { roleMiddleware } from "../../middleware/role";
+import { enforceSubscription } from "../../middleware/subscription";
 import { sendSuccess, sendPaginated } from "../../utils/response";
 import { Errors } from "../../errors";
 
@@ -24,7 +25,11 @@ export default async function teacherRoutes(server: FastifyInstance) {
   server.post(
     "/teachers",
     {
-      preHandler: [...preHandler, roleMiddleware(["Admin", "SuperAdmin"])],
+      preHandler: [
+        ...preHandler,
+        roleMiddleware(["Admin", "SuperAdmin"]),
+        enforceSubscription,
+      ],
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const result = createTeacherSchema.safeParse(request.body);

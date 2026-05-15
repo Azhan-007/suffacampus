@@ -15,6 +15,7 @@ import {
   reactivateSubscription,
   type SubStatus,
 } from "../../src/services/subscription.service";
+import { resetTenantAccessCompatibilityCache } from "../../src/services/tenant-lifecycle.service";
 import { resetIdCounter } from "../helpers";
 
 const mockState = {
@@ -94,6 +95,7 @@ jest.mock("../../src/services/audit.service", () => ({
 beforeEach(() => {
   mockState.schools.clear();
   resetIdCounter();
+  resetTenantAccessCompatibilityCache();
   jest.clearAllMocks();
 });
 

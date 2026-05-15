@@ -32,6 +32,7 @@ import activityRoutes from "./activities";
 import configRoutes from "./config";
 import integrationsRoutes from "./integrations";
 import dataPrivacyRoutes from "./data-privacy";
+import opsRoutes from "./ops";
 
 /**
  * Register all v1 API routes.
@@ -80,4 +81,6 @@ export default async function v1Routes(server: FastifyInstance) {
   server.register(configRoutes);
   server.register(integrationsRoutes);
   server.register(dataPrivacyRoutes);
+  // Operational inspection (SuperAdmin, X-API-Key only)
+  server.register(opsRoutes);
 }

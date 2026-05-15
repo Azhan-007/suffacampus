@@ -29,9 +29,8 @@ jest.mock("../../src/lib/prisma", () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { getDoc } = require("../__mocks__/firebase-admin");
 
-  return {
-    prisma: {
-      user: {
+  const prisma = {
+    user: {
         findUnique: jest.fn(
           async ({ where: { uid } }: { where: { uid: string } }) => {
             const doc = getDoc("users", uid) as Record<string, unknown> | undefined;
@@ -156,7 +155,13 @@ jest.mock("../../src/lib/prisma", () => {
             return true;
           }).length;
         }),
-      },
+    },
+  };
+
+  return {
+    prisma: {
+      ...prisma,
+      $transaction: jest.fn(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)),
     },
   };
 });

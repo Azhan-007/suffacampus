@@ -7,15 +7,29 @@ import {
 import { processOverdueFeeNotifications } from "../services/overdue-fee-notification.service";
 import { executeReportById } from "../services/report.service";
 import { prisma } from "../lib/prisma";
+import { env } from "../lib/env";
 import { trackError } from "../services/error-tracking.service";
 import {
   trialExpiringEmail,
   usageLimitWarningEmail,
 } from "../services/email-templates";
 import { enqueueEmail, initEmailQueue, shutdownEmailQueue } from "../services/email-queue.service";
+import { enqueuePaymentRecovery } from "../services/payment-recovery-queue.service";
 import { createLogger } from "../utils/logger";
 import { assertSchoolScope } from "../lib/tenant-scope";
 import { setReportQueueBacklog } from "../plugins/metrics";
+import { reconcileUsageCounters } from "../services/quota.service";
+import {
+  initReconciliationQueue,
+  shutdownReconciliationQueue,
+} from "../services/reconciliation-queue.service";
+import {
+  runFullReconciliation,
+  runRepairSweep,
+  detectCapturedNotActivated,
+  detectStalePendingPayments,
+  detectStaleProcessingWebhooks,
+} from "../services/reconciliation.service";
 
 const log = createLogger("workers");
 
@@ -44,6 +58,7 @@ export function startWorkers(): void {
   started = true;
 
   void initEmailQueue();
+  void initReconciliationQueue();
 
   log.info("[workers] Starting background workers...");
 
@@ -97,6 +112,23 @@ export function startWorkers(): void {
     } catch (err) {
       log.error({ err }, "Usage snapshot worker failed");
       trackError({ error: err, metadata: { context: "worker:usage-snapshot" } });
+    }
+  }));
+
+  // ── Usage Counter Reconciliation ─────────────────────────────────────
+  // Every day at 2:30 AM — report drift only
+  tasks.push(cron.schedule("30 2 * * *", async () => {
+    try {
+      const result = await reconcileUsageCounters({ mode: "report" });
+      if (result.discrepancies > 0) {
+        log.warn(
+          { checked: result.checked, discrepancies: result.discrepancies },
+          "Usage counter drift detected"
+        );
+      }
+    } catch (err) {
+      log.error({ err }, "Usage counter reconciliation failed");
+      trackError({ error: err, metadata: { context: "worker:usage-reconcile" } });
     }
   }));
 
@@ -167,13 +199,104 @@ export function startWorkers(): void {
     }
   }));
 
+  // ── Payment Recovery Sweep ───────────────────────────────────────────
+  // Every 5 minutes — re-enqueue captured payments awaiting activation repair.
+  tasks.push(cron.schedule("*/5 * * * *", async () => {
+    try {
+      const stuckPayments = await prisma.legacyPayment.findMany({
+        where: {
+          activationState: {
+            in: ["captured_activation_pending", "activation_failed", "reconciliation_required"],
+          },
+        },
+        select: { id: true },
+        take: 100,
+        orderBy: { updatedAt: "asc" },
+      });
+
+      for (const payment of stuckPayments) {
+        await enqueuePaymentRecovery(payment.id, {
+          requestedBy: "worker:payment-recovery-sweep",
+        });
+      }
+    } catch (err) {
+      log.error({ err }, "Payment recovery sweep failed");
+      trackError({ error: err, metadata: { context: "worker:payment-recovery-sweep" } });
+    }
+  }));
+
+  // ── Reconciliation: Full Run ─────────────────────────────────────────
+  // Every day at 4:00 AM — full drift detection + repair sweep
+  tasks.push(cron.schedule("0 4 * * *", async () => {
+    try {
+      const result = await runFullReconciliation();
+      log.info({ detected: result.detected, repair: result.repair }, "[workers] Full reconciliation completed");
+    } catch (err) {
+      log.error({ err }, "Full reconciliation worker failed");
+      trackError({ error: err, metadata: { context: "worker:full-reconciliation" } });
+    }
+  }));
+
+  // ── Reconciliation: Repair Sweep ──────────────────────────────────────
+  // Every 15 minutes — attempt repairs on open drift records
+  tasks.push(cron.schedule("*/15 * * * *", async () => {
+    try {
+      const result = await runRepairSweep();
+      if (result.attempted > 0) {
+        log.info(result, "[workers] Repair sweep completed");
+      }
+    } catch (err) {
+      log.error({ err }, "Repair sweep worker failed");
+      trackError({ error: err, metadata: { context: "worker:repair-sweep" } });
+    }
+  }));
+
+  // ── Reconciliation: Captured-Not-Activated Detection ──────────────────
+  // Every 10 minutes — detect captured payments not yet activated
+  tasks.push(cron.schedule("*/10 * * * *", async () => {
+    try {
+      const count = await detectCapturedNotActivated();
+      if (count > 0) {
+        log.warn({ count }, "[workers] Detected captured-not-activated payments");
+      }
+    } catch (err) {
+      log.error({ err }, "Captured-not-activated detection failed");
+      trackError({ error: err, metadata: { context: "worker:detect-captured-not-activated" } });
+    }
+  }));
+
+  // ── Reconciliation: Stale Pending + Stale Processing Webhooks ────────
+  // Every 30 minutes
+  tasks.push(cron.schedule("*/30 * * * *", async () => {
+    try {
+      const count = await detectStalePendingPayments();
+      if (count > 0) {
+        log.warn({ count }, "[workers] Detected stale pending payments");
+      }
+    } catch (err) {
+      log.error({ err }, "Stale pending detection failed");
+      trackError({ error: err, metadata: { context: "worker:detect-stale-pending" } });
+    }
+
+    try {
+      const count = await detectStaleProcessingWebhooks();
+      if (count > 0) {
+        log.warn({ count }, "[workers] Detected and reset stale PROCESSING webhooks");
+      }
+    } catch (err) {
+      log.error({ err }, "Stale processing webhook detection failed");
+      trackError({ error: err, metadata: { context: "worker:detect-stale-processing-webhooks" } });
+    }
+  }));
+
+
   // ── WebhookEvent Cleanup ──────────────────────────────────────────────
   // Every day at 3:00 AM — delete processed webhook events older than 30 days
   tasks.push(cron.schedule("0 3 * * *", async () => {
     try {
       const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const result = await prisma.webhookEvent.deleteMany({
-        where: { processedAt: { lt: cutoff } },
+        where: { status: "PROCESSED", processedAt: { lt: cutoff } },
       });
       if (result.count > 0) {
         log.info(`[workers] Cleaned up ${result.count} old webhook event(s)`);
@@ -255,6 +378,33 @@ export function startWorkers(): void {
       trackError({ error: err, metadata: { context: "worker:retention:notification" } });
     }
 
+    // 6. RefreshToken — prune expired and long-revoked tokens
+    try {
+      const now = new Date();
+      const expiredCutoff = new Date(
+        Date.now() - env.AUTH_REFRESH_TOKEN_EXPIRED_RETENTION_DAYS * 24 * 60 * 60 * 1000
+      );
+      const revokedCutoff = new Date(
+        Date.now() - env.AUTH_REFRESH_TOKEN_REVOKED_RETENTION_DAYS * 24 * 60 * 60 * 1000
+      );
+
+      const expired = await prisma.refreshToken.deleteMany({
+        where: { expiresAt: { lt: expiredCutoff } },
+      });
+      if (expired.count > 0) results.push(`refreshTokenExpired:${expired.count}`);
+
+      const revoked = await prisma.refreshToken.deleteMany({
+        where: {
+          revokedAt: { lt: revokedCutoff },
+          expiresAt: { lt: now },
+        },
+      });
+      if (revoked.count > 0) results.push(`refreshTokenRevoked:${revoked.count}`);
+    } catch (err) {
+      log.error({ err }, "Retention cleanup failed: refreshToken");
+      trackError({ error: err, metadata: { context: "worker:retention:refreshToken" } });
+    }
+
     if (results.length > 0) {
       log.info({ cleaned: results }, "[workers] Data retention cleanup completed");
     }
@@ -268,6 +418,7 @@ export function stopWorkers(): void {
   tasks.forEach((t) => t.stop());
   tasks.length = 0;
   void shutdownEmailQueue();
+  void shutdownReconciliationQueue();
   started = false;
   log.info("[workers] All background workers stopped");
 }

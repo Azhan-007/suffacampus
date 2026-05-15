@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Unit tests for student.service.ts
  *
  * Tests CRUD operations: create, list, get by ID, update, soft-delete.
@@ -12,6 +12,10 @@ import {
   softDeleteStudent,
 } from "../../src/services/student.service";
 import {
+  reserveCapacity,
+  consumeReservedCapacity,
+} from "../../src/services/quota.service";
+import {
   auth,
   resetFirestoreMock,
 } from "../__mocks__/firebase-admin";
@@ -24,8 +28,8 @@ const mockState = {
   studentCounter: 1,
 };
 
-jest.mock("../../src/lib/prisma", () => ({
-  prisma: {
+jest.mock("../../src/lib/prisma", () => {
+  const prisma = {
     school: {
       findUnique: jest.fn(async ({ where: { id } }) => {
         const school = mockState.schools.get(id);
@@ -76,7 +80,27 @@ jest.mock("../../src/lib/prisma", () => ({
         return user;
       }),
     },
-  },
+  };
+
+  return {
+    prisma: {
+      ...prisma,
+      $transaction: jest.fn(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma)),
+    },
+  };
+});
+
+jest.mock("../../src/services/quota.service", () => ({
+  reserveCapacity: jest.fn().mockResolvedValue({
+    mode: "counter",
+    schoolId: "school_1",
+    resourceType: "students",
+    amount: 1,
+    limit: 200,
+    used: 0,
+    reserved: 0,
+  }),
+  consumeReservedCapacity: jest.fn().mockResolvedValue(undefined),
 }));
 
 function seedSchool(id: string) {
@@ -116,6 +140,8 @@ beforeEach(() => {
   seedSchool("school_1");
   mockCreateUser.mockReset();
   mockGetUserByEmail.mockReset();
+  (reserveCapacity as jest.Mock).mockClear();
+  (consumeReservedCapacity as jest.Mock).mockClear();
   jest.clearAllMocks();
 });
 
@@ -191,6 +217,19 @@ describe("createStudent", () => {
     const result = await createStudent("school_1", validPayload, "admin_1");
     expect(result).toHaveProperty("credentials");
     expect(mockGetUserByEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not consume quota when creation fails", async () => {
+    const prismaModule = await import("../../src/lib/prisma.js");
+    (prismaModule.prisma.student.create as jest.Mock).mockRejectedValueOnce(
+      new Error("DB insert failed")
+    );
+
+    await expect(
+      createStudent("school_1", validPayload, "admin_1")
+    ).rejects.toThrow("DB insert failed");
+
+    expect(consumeReservedCapacity).not.toHaveBeenCalled();
   });
 });
 

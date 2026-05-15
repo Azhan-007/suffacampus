@@ -19,6 +19,31 @@ export const authRateLimitConfig = {
   },
 } as const;
 
+function refreshRateLimitKeyGenerator(request: FastifyRequest): string {
+  const body = request.body as { refreshToken?: unknown } | undefined;
+  const raw = typeof body?.refreshToken === "string" ? body.refreshToken.trim() : "";
+  if (raw) {
+    const selector = raw.split(".")[0];
+    if (selector) {
+      return `refresh:${selector}`;
+    }
+  }
+
+  return `ip:${request.ip}`;
+}
+
+export const refreshRateLimitProfile = {
+  max: env.AUTH_REFRESH_RATE_LIMIT_MAX,
+  timeWindow: `${env.AUTH_REFRESH_RATE_LIMIT_WINDOW_SECONDS} seconds`,
+  keyGenerator: refreshRateLimitKeyGenerator,
+} as const;
+
+export const refreshRateLimitConfig = {
+  config: {
+    rateLimit: refreshRateLimitProfile,
+  },
+} as const;
+
 function normalizeHeaderValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
     const first = value[0]?.trim();
