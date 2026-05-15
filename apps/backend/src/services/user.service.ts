@@ -7,6 +7,19 @@ import { assertSchoolScope } from "../lib/tenant-scope";
 
 const SUPERADMIN_ROLE = "SuperAdmin";
 
+/**
+ * Roles that school-scoped endpoints are allowed to assign.
+ * SuperAdmin and platform-level roles are excluded.
+ */
+const ASSIGNABLE_SCHOOL_ROLES = new Set(["Admin", "Teacher", "Staff"]);
+
+/**
+ * Roles that are considered "privileged" within a school.
+ * Promoting a user TO a privileged role from a non-privileged role
+ * is logged as a privilege escalation event.
+ */
+const PRIVILEGED_ROLES = new Set(["Admin"]);
+
 function assertNotSuperAdminRole(role?: string): void {
   if (role === SUPERADMIN_ROLE) {
     throw Errors.badRequest("SuperAdmin role cannot be managed from school-scoped endpoints");
@@ -16,6 +29,33 @@ function assertNotSuperAdminRole(role?: string): void {
 function assertUserNotSuperAdmin(existingRole: string): void {
   if (existingRole === SUPERADMIN_ROLE) {
     throw Errors.badRequest("SuperAdmin users cannot be managed from school-scoped endpoints");
+  }
+}
+
+/**
+ * Validates that a role transition is allowed from school-scoped endpoints.
+ *
+ * Rules:
+ *  1. Target role must be in the assignable set (Admin, Teacher, Staff).
+ *  2. The existing role must also be manageable (not SuperAdmin — already checked).
+ *  3. A user cannot change their own role (prevents self-escalation).
+ */
+function validateRoleTransition(
+  existingRole: string,
+  newRole: string,
+  targetUid: string,
+  performerUid: string
+): void {
+  // Rule 1: Target role must be assignable at school scope
+  if (!ASSIGNABLE_SCHOOL_ROLES.has(newRole)) {
+    throw Errors.badRequest(
+      `Role "${newRole}" cannot be assigned from school-scoped endpoints. Allowed: ${[...ASSIGNABLE_SCHOOL_ROLES].join(", ")}`
+    );
+  }
+
+  // Rule 2: Self-promotion prevention — users cannot change their own role
+  if (targetUid === performerUid) {
+    throw Errors.badRequest("You cannot change your own role");
   }
 }
 
@@ -120,6 +160,11 @@ export async function updateUser(
   const existing = await prisma.user.findFirst({ where: { uid, schoolId } });
   if (!existing) throw Errors.notFound("User", uid);
   assertUserNotSuperAdmin(existing.role);
+
+  // Validate role transition if role is being changed
+  if (data.role && data.role !== existing.role) {
+    validateRoleTransition(existing.role, data.role, uid, performedBy);
+  }
 
   // Update Firebase Auth if relevant fields changed
   const authUpdates: admin.auth.UpdateRequest = {};

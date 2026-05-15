@@ -70,6 +70,55 @@ const envSchema = z.object({
     },
     z.boolean().default(false)
   ),
+  AUTH_REFRESH_TOKENS_ENABLED: z.preprocess(
+    (value) => {
+      if (typeof value === "string") {
+        return value.trim().toLowerCase() === "true";
+      }
+      if (typeof value === "boolean") {
+        return value;
+      }
+      return false;
+    },
+    z.boolean().default(false)
+  ),
+  AUTH_REQUIRE_REFRESH_FLOW: z.preprocess(
+    (value) => {
+      if (typeof value === "string") {
+        return value.trim().toLowerCase() === "true";
+      }
+      if (typeof value === "boolean") {
+        return value;
+      }
+      return false;
+    },
+    z.boolean().default(false)
+  ),
+  AUTH_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  AUTH_REFRESH_TOKEN_REUSE_GRACE_SECONDS: z
+    .coerce
+    .number()
+    .int()
+    .min(0)
+    .default(5),
+  AUTH_REFRESH_TOKEN_EXPIRED_RETENTION_DAYS: z
+    .coerce
+    .number()
+    .int()
+    .min(1)
+    .default(7),
+  AUTH_REFRESH_TOKEN_REVOKED_RETENTION_DAYS: z
+    .coerce
+    .number()
+    .int()
+    .min(1)
+    .default(30),
+  AUTH_REFRESH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(40),
+  AUTH_REFRESH_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
+  AUTH_REFRESH_TOKEN_HASH_SECRET: z
+    .string()
+    .min(1)
+    .default("dev-refresh-token-secret-change-me"),
 
   // â”€â”€ Queue / Redis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   REDIS_URL: z.string().optional(),
@@ -182,6 +231,16 @@ if (env.NODE_ENV === "production") {
       "âš ï¸  Razorpay credentials are not set — payment features will fail."
     );
   }
+  // FATAL: Razorpay enabled without webhook secret -> all webhooks fail signature verification
+  if (env.RAZORPAY_KEY_ID && !env.RAZORPAY_WEBHOOK_SECRET) {
+    log.error(
+      "RAZORPAY_WEBHOOK_SECRET must be set when Razorpay is enabled. " +
+      "Without it all incoming payment webhooks fail signature verification " +
+      "and captured payments cannot be activated. " +
+      "Configure the secret in Razorpay Dashboard -> Settings -> Webhooks."
+    );
+    process.exit(1);
+  }
   if (!env.REDIS_URL) {
     log.warn(
       "âš ï¸  REDIS_URL is not set — queue workers and retries will run in degraded mode."
@@ -195,6 +254,15 @@ if (env.NODE_ENV === "production") {
   if (env.JWT_ACCESS_SECRET === "dev-session-secret-change-me") {
     log.error(
       "\n❌  JWT_ACCESS_SECRET must be set to a strong value in production.\n"
+    );
+    process.exit(1);
+  }
+  if (
+    (env.AUTH_REFRESH_TOKENS_ENABLED || env.AUTH_REQUIRE_REFRESH_FLOW) &&
+    env.AUTH_REFRESH_TOKEN_HASH_SECRET === "dev-refresh-token-secret-change-me"
+  ) {
+    log.error(
+      "\n❌  AUTH_REFRESH_TOKEN_HASH_SECRET must be set to a strong value in production.\n"
     );
     process.exit(1);
   }

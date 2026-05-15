@@ -68,6 +68,7 @@ export async function authenticate(
       userAgent: sessionAuth.userAgent,
       lastActiveAt: sessionAuth.lastActiveAt.toISOString(),
       expiresAt: sessionAuth.expiresAt.toISOString(),
+      accessVersion: sessionAuth.accessVersion,
     };
   } else {
     const route = (request.routeOptions?.url ?? request.url).split("?")[0];

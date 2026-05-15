@@ -11,10 +11,11 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { auth as firebaseAuth } from "../../lib/firebase-admin";
 import { prisma } from "../../lib/prisma";
+import { env } from "../../lib/env";
 import { enterCriticalLaneOrReplyOverloaded } from "../../lib/overload";
 import { authenticate } from "../../middleware/auth";
 import { recordAuthLookupCacheEvent } from "../../plugins/metrics";
-import { authRateLimitConfig } from "../../plugins/rateLimit";
+import { authRateLimitConfig, refreshRateLimitConfig } from "../../plugins/rateLimit";
 import { sendSuccess } from "../../utils/response";
 import { Errors } from "../../errors";
 import { writeAuditLog } from "../../services/audit.service";
@@ -25,6 +26,18 @@ import {
   revokeSessionById,
   revokeTokenByJti,
 } from "../../services/session.service";
+import {
+  issueRefreshTokenForSession,
+  refreshSessionTokens,
+  revokeRefreshTokenFamiliesForSession,
+  revokeRefreshTokenFamiliesForUser,
+  isRefreshTokensEnabled,
+} from "../../services/refresh-token.service";
+import {
+  createTenantAccessState,
+  deriveTenantAccessSeed,
+  isTenantAccessStateAvailable,
+} from "../../services/tenant-lifecycle.service";
 
 async function generateUniqueSchoolCode(schoolName: string): Promise<string> {
   const prefix = schoolName
@@ -357,7 +370,61 @@ export default async function authRoutes(server: FastifyInstance) {
         request,
       });
 
-      return sendSuccess(request, reply, {
+      const shouldIssueRefresh = isRefreshTokensEnabled();
+      let refreshPayload: {
+        refreshToken: string;
+        refreshTokenId: string;
+        refreshTokenFamilyId: string;
+        refreshTokenExpiresAt: Date;
+      } | null = null;
+      let refreshError: unknown = null;
+
+      if (shouldIssueRefresh) {
+        try {
+          const refresh = await issueRefreshTokenForSession({
+            sessionId: session.id,
+            userUid: uid,
+            schoolId:
+              typeof user.schoolId === "string" && user.schoolId.trim().length > 0
+                ? user.schoolId
+                : null,
+            request,
+          });
+
+          refreshPayload = {
+            refreshToken: refresh.refreshToken,
+            refreshTokenId: refresh.refreshTokenId,
+            refreshTokenFamilyId: refresh.refreshTokenFamilyId,
+            refreshTokenExpiresAt: refresh.refreshTokenExpiresAt,
+          };
+        } catch (error) {
+          refreshError = error;
+          request.log.error(
+            { err: error, uid, sessionId: session.id },
+            "Failed to issue refresh token"
+          );
+        }
+      }
+
+      if (env.AUTH_REQUIRE_REFRESH_FLOW && shouldIssueRefresh && !refreshPayload) {
+        await revokeSessionById({
+          sessionId: session.id,
+          userUid: uid,
+          schoolId:
+            typeof user.schoolId === "string" && user.schoolId.trim().length > 0
+              ? user.schoolId
+              : undefined,
+          reason: "refresh_required_failed",
+        });
+
+        throw Errors.internal(
+          refreshError instanceof Error
+            ? refreshError.message
+            : "Refresh token issuance failed"
+        );
+      }
+
+      const responsePayload: Record<string, unknown> = {
         uid,
         email: user.email,
         displayName: user.name ?? user.displayName ?? "",
@@ -378,10 +445,55 @@ export default async function authRoutes(server: FastifyInstance) {
           lastActiveAt: session.lastActiveAt,
           expiresAt: session.expiresAt,
         },
-      });
+      };
+
+      if (shouldIssueRefresh) {
+        responsePayload.refreshTokenRequired = env.AUTH_REQUIRE_REFRESH_FLOW;
+      }
+
+      if (refreshPayload) {
+        Object.assign(responsePayload, refreshPayload);
+      }
+
+      return sendSuccess(request, reply, responsePayload);
       } finally {
         release();
       }
+    }
+  );
+
+  const refreshSchema = z.object({
+    refreshToken: z.string().min(1),
+  }).strict();
+
+  // -----------------------------------------------------------------------
+  // POST /api/v1/auth/refresh — rotate refresh token and issue access JWT
+  // -----------------------------------------------------------------------
+  server.post(
+    "/auth/refresh",
+    refreshRateLimitConfig,
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = refreshSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw Errors.validation(parsed.error.flatten().fieldErrors);
+      }
+
+      if (!isRefreshTokensEnabled()) {
+        throw Errors.badRequest("Refresh tokens are disabled");
+      }
+
+      const result = await refreshSessionTokens({
+        refreshToken: parsed.data.refreshToken,
+        request,
+      });
+
+      return sendSuccess(request, reply, {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        refreshTokenExpiresAt: result.refreshTokenExpiresAt,
+        refreshTokenFamilyId: result.refreshTokenFamilyId,
+        session: result.session,
+      });
     }
   );
 
@@ -419,9 +531,26 @@ export default async function authRoutes(server: FastifyInstance) {
         throw Errors.notFound("Session", request.session.id);
       }
 
+      let refreshRevokedCount = 0;
+      if (isRefreshTokensEnabled()) {
+        const refreshResult = await revokeRefreshTokenFamiliesForSession({
+          sessionId: request.session.id,
+          userUid: request.user.uid,
+          schoolId:
+            typeof request.user.schoolId === "string"
+              ? request.user.schoolId
+              : null,
+          reason: "logout_current",
+          request,
+        });
+
+        refreshRevokedCount = refreshResult.revokedCount;
+      }
+
       return sendSuccess(request, reply, {
         revoked: true,
         sessionId: request.session.id,
+        refreshRevokedCount,
       });
     }
   );
@@ -442,9 +571,25 @@ export default async function authRoutes(server: FastifyInstance) {
         reason: "logout_all",
       });
 
+      let refreshRevokedCount = 0;
+      if (isRefreshTokensEnabled()) {
+        const refreshResult = await revokeRefreshTokenFamiliesForUser({
+          userUid: request.user.uid,
+          schoolId:
+            typeof request.user.schoolId === "string"
+              ? request.user.schoolId
+              : null,
+          reason: "logout_all",
+          request,
+        });
+
+        refreshRevokedCount = refreshResult.revokedCount;
+      }
+
       return sendSuccess(request, reply, {
         revoked: true,
         revokedCount: result.revokedCount,
+        refreshRevokedCount,
       });
     }
   );
@@ -617,6 +762,29 @@ export default async function authRoutes(server: FastifyInstance) {
               currency: "INR",
             },
           });
+
+          const seed = deriveTenantAccessSeed({
+            subscriptionStatus: school.subscriptionStatus ?? "trial",
+            trialEndDate: school.trialEndDate ?? trialEnd,
+            currentPeriodEnd: school.currentPeriodEnd ?? null,
+            cancelEffectiveDate: school.cancelEffectiveDate ?? null,
+            isActive: school.isActive ?? true,
+          });
+
+          const access = await createTenantAccessState({
+            schoolId: school.id,
+            lifecycleState: seed.lifecycleState,
+            accessState: seed.accessState,
+            reason: "self_onboarding",
+            effectiveUntil: seed.effectiveUntil,
+            performedBy: firebaseUid ?? "system",
+            source: "auth_register",
+            useTransaction: tx,
+          });
+
+          if (isTenantAccessStateAvailable() && !access) {
+            throw Errors.internal("Failed to bootstrap tenant access state");
+          }
 
           await tx.schoolConfig.create({
             data: {

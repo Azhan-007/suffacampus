@@ -9,6 +9,7 @@ import jwt, {
 import { prisma } from "../lib/prisma";
 import { env } from "../lib/env";
 import { createLogger } from "../utils/logger";
+import { resolveAccessVersion } from "./tenant-lifecycle.service";
 
 const log = createLogger("session-service");
 
@@ -40,6 +41,7 @@ export type SessionJwtPayload = JwtPayload & {
   typ: "access";
   schoolId?: string | null;
   role?: string | null;
+  accessVersion?: number;
 };
 
 export type SessionAuthContext = {
@@ -52,6 +54,7 @@ export type SessionAuthContext = {
   userAgent: string | null;
   lastActiveAt: Date;
   expiresAt: Date;
+  accessVersion?: number;
 };
 
 type CreateSessionParams = {
@@ -156,6 +159,10 @@ function toSessionJwtPayload(value: string | JwtPayload): SessionJwtPayload | nu
   const sid = typeof value.sid === "string" ? value.sid : null;
   const jti = typeof value.jti === "string" ? value.jti : null;
   const typ = value.typ === "access" ? "access" : null;
+  const accessVersion =
+    typeof (value as { accessVersion?: unknown }).accessVersion === "number"
+      ? (value as { accessVersion: number }).accessVersion
+      : undefined;
 
   if (!sub || !sid || !jti || !typ) {
     return null;
@@ -167,6 +174,7 @@ function toSessionJwtPayload(value: string | JwtPayload): SessionJwtPayload | nu
     sid,
     jti,
     typ,
+    accessVersion,
   };
 }
 
@@ -379,6 +387,8 @@ export async function createSessionWithAccessToken(
     },
   });
 
+  const accessVersion = await resolveAccessVersion(params.schoolId ?? null);
+
   const accessToken = signAccessToken({
     sub: params.userUid,
     sid: session.id,
@@ -386,6 +396,7 @@ export async function createSessionWithAccessToken(
     typ: "access",
     schoolId: params.schoolId ?? null,
     role: params.role ?? null,
+    accessVersion,
   });
 
   return { accessToken, session };
@@ -453,6 +464,7 @@ export async function validateSessionAccessToken(
     userAgent: session.userAgent,
     lastActiveAt: session.lastActiveAt,
     expiresAt: session.expiresAt,
+    accessVersion: payload.accessVersion,
   };
 }
 

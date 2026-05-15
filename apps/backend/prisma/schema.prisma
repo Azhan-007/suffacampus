@@ -50,6 +50,26 @@ enum SubscriptionStatus {
   past_due
 }
 
+enum TenantAccessStatus {
+  active
+  blocked
+}
+
+enum TenantLifecycleState {
+  trial
+  active
+  past_due
+  expired
+  cancelled
+  suspended
+}
+
+enum TenantUsageResourceType {
+  students
+  teachers
+  storage
+}
+
 enum BillingCycle {
   monthly
   yearly
@@ -169,6 +189,51 @@ enum NotificationDeliveryChannel {
   EMAIL
 }
 
+enum WebhookEventStatus {
+  RECEIVED
+  VERIFIED
+  PROCESSING
+  PROCESSED
+  FAILED
+  DEAD_LETTER
+}
+
+enum PaymentActivationState {
+  captured_activation_pending
+  activation_failed
+  reconciliation_required
+  activated
+}
+
+enum DriftType {
+  reconciliation_required
+  provider_missing
+  provider_mismatch
+  orphaned_capture
+  orphaned_invoice
+  activation_drift
+  refund_drift
+  stale_pending
+  stale_overdue
+  invoice_payment_mismatch
+}
+
+enum DriftStatus {
+  detected
+  repair_attempted
+  repaired
+  manual_review_required
+  dismissed
+}
+
+enum ReconciliationEventType {
+  drift_detected
+  repair_attempted
+  repair_succeeded
+  repair_failed
+  manual_review_required
+}
+
 // ═══════════════════════════════════════════════════════════════
 // SCHOOL (Tenant)
 // ═══════════════════════════════════════════════════════════════
@@ -273,10 +338,68 @@ model School {
   config             SchoolConfig?
   sessions           Session[]
   revokedTokens      RevokedToken[]
+  refreshTokens      RefreshToken[]
+  tenantAccessState  TenantAccessState?
+  usageCounters      TenantUsageCounter[]
 
   @@index([code])
   @@index([subscriptionStatus])
   @@index([isActive])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TENANT ACCESS STATE (Source of truth for access gating)
+// ═══════════════════════════════════════════════════════════════
+
+model TenantAccessState {
+  id       String @id @default(cuid())
+  schoolId String @unique
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  accessState    TenantAccessStatus  @default(active)
+  lifecycleState TenantLifecycleState @default(trial)
+  reason         String?
+  effectiveUntil DateTime?
+
+  sourceSubscriptionId String?
+  sourceSubscription   Subscription? @relation("SubscriptionAccessStates", fields: [sourceSubscriptionId], references: [id], onDelete: SetNull)
+
+  accessVersion    Int      @default(0)
+  version          Int      @default(0)
+  lastTransitionAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId, accessState])
+  @@index([schoolId, lifecycleState])
+  @@index([accessState])
+  @@index([lifecycleState])
+  @@index([effectiveUntil])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TENANT USAGE COUNTER (Quota source of truth)
+// ═══════════════════════════════════════════════════════════════
+
+model TenantUsageCounter {
+  id           String                 @id @default(cuid())
+  schoolId     String
+  resourceType TenantUsageResourceType
+  used         Int                    @default(0)
+  reserved     Int                    @default(0)
+  limitSnapshot Int?
+  version      Int                    @default(0)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, resourceType])
+  @@index([schoolId])
+  @@index([resourceType])
+  @@index([schoolId, resourceType, updatedAt])
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -301,6 +424,7 @@ model User {
   school        School?        @relation(fields: [schoolId], references: [id])
   sessions      Session[]
   revokedTokens RevokedToken[]
+  refreshTokens RefreshToken[]
 
   // Link to student/teacher record if applicable
   studentId  String?
@@ -902,6 +1026,8 @@ model Subscription {
 
   updatedAt DateTime @updatedAt
 
+  accessStates TenantAccessState[] @relation("SubscriptionAccessStates")
+
   @@index([schoolId])
   @@index([status])
   @@index([schoolId, status, startDate])
@@ -916,6 +1042,8 @@ model Invoice {
   id            String  @id @default(cuid())
   schoolId      String
   invoiceNumber String? @unique
+  sequenceNumber Int?
+  periodKey     String?
 
   plan     String
   amount   Decimal @db.Decimal(14, 2)
@@ -932,11 +1060,27 @@ model Invoice {
 
   description String?
   paidAt      DateTime?
+  finalizedAt DateTime?
+  immutableAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([schoolId])
+  @@index([schoolId, periodKey])
+}
+
+model InvoiceSequence {
+  id             String   @id @default(cuid())
+  schoolId       String
+  periodKey      String
+  currentSequence Int      @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, periodKey])
+  @@index([schoolId, periodKey])
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1029,6 +1173,7 @@ model Session {
   updatedAt DateTime @updatedAt
 
   revokedTokens RevokedToken[]
+  refreshTokens RefreshToken[]
 
   @@index([userUid, revokedAt])
   @@index([schoolId, revokedAt])
@@ -1056,6 +1201,48 @@ model RevokedToken {
   @@index([userUid, expiresAt])
   @@index([sessionId, expiresAt])
   @@index([schoolId, expiresAt])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REFRESH TOKEN
+// ═══════════════════════════════════════════════════════════════
+
+model RefreshToken {
+  id       String @id @default(cuid())
+  selector String @unique
+  tokenHash String
+  familyId String
+
+  parentId String?
+  parent   RefreshToken? @relation("RefreshTokenParent", fields: [parentId], references: [id], onDelete: SetNull)
+  children RefreshToken[] @relation("RefreshTokenParent")
+
+  replacedById String?
+  replacedBy   RefreshToken? @relation("RefreshTokenReplacement", fields: [replacedById], references: [id], onDelete: SetNull)
+  replacements RefreshToken[] @relation("RefreshTokenReplacement")
+
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  userUid String
+  user    User   @relation(fields: [userUid], references: [uid], onDelete: Cascade)
+
+  schoolId String?
+  school   School? @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+
+  lastUsedAt      DateTime?
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  revokeReason    String?
+  reuseDetectedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userUid, revokedAt])
+  @@index([sessionId, revokedAt])
+  @@index([familyId, revokedAt])
+  @@index([expiresAt])
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1106,6 +1293,24 @@ model WebhookFailure {
   @@index([status])
 }
 
+model PaymentActivationLedger {
+  id                String                @id @default(cuid())
+  schoolId          String
+  legacyPaymentId   String
+  providerPaymentId String?
+  providerOrderId   String?
+  action            String
+  state             PaymentActivationState
+  details           Json?
+  createdAt         DateTime              @default(now())
+
+  @@unique([legacyPaymentId, action])
+  @@index([schoolId])
+  @@index([providerPaymentId])
+  @@index([providerOrderId])
+  @@index([state])
+}
+
 // ═══════════════════════════════════════════════════════════════
 // PAYMENT
 // ═══════════════════════════════════════════════════════════════
@@ -1137,12 +1342,27 @@ model LegacyPayment {
   refundedAmount Decimal? @default(0) @db.Decimal(14, 2)
   description    String?
   receiptUrl     String?
+  activationState PaymentActivationState?
+  activationAttemptCount Int @default(0)
+  activationLastError   String?
+  activationRequestedAt DateTime?
+  activationStartedAt    DateTime?
+  activationCompletedAt  DateTime?
+  reconciliationMarker   String?
+  reconciliationRequiredAt DateTime?
+  reconciledAt           DateTime?
+  capturedAt             DateTime?
+  invoiceId              String?
+  ledgerEventId          String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([schoolId, idempotencyKey])
   @@index([schoolId])
+  @@index([schoolId, activationState])
+  @@index([gatewayId])
+  @@index([gatewayOrderId])
   @@map("Payment")
 }
 
@@ -1478,10 +1698,94 @@ model SchoolConfig {
 /// Tracks processed webhook events by their provider-assigned ID
 /// to prevent duplicate processing on retries/replays.
 model WebhookEvent {
-  id          String   @id @default(cuid())
-  eventId     String   @unique /// Provider event ID (x-razorpay-event-id, stripe event.id)
-  provider    String /// "razorpay" | "stripe"
-  processedAt DateTime @default(now())
+  id                String             @id @default(cuid())
+  eventId           String             @unique /// Provider event ID (x-razorpay-event-id, stripe event.id)
+  provider          String /// "razorpay" | "stripe"
+  eventType         String?
+  providerPaymentId String?
+  providerOrderId   String?
+  schoolId          String?
+  rawPayload        String?
+  payloadHash       String?
+  status            WebhookEventStatus @default(RECEIVED)
+  processingAttempts Int               @default(0)
+  lastAttemptAt     DateTime?
+  processedAt       DateTime?
+  deadLetteredAt    DateTime?
+  failureReason     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([eventId])
+  @@index([provider, eventType])
+  @@index([providerPaymentId])
+  @@index([providerOrderId])
+  @@index([schoolId])
+  @@index([status])
+  @@index([payloadHash])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RECONCILIATION — Drift Detection & Repair
+// ═══════════════════════════════════════════════════════════════
+
+model ReconciliationDriftRecord {
+  id                   String      @id @default(cuid())
+  schoolId             String?
+  driftType            DriftType
+  status               DriftStatus @default(detected)
+
+  // Reference to the affected entity
+  entityType           String      // "payment", "invoice", "subscription"
+  entityId             String      // LegacyPayment.id, Invoice.id, etc.
+  providerPaymentId    String?
+  providerOrderId      String?
+
+  // Drift details
+  driftReason          String
+  driftDetails         Json?
+  expectedState        String?
+  actualState          String?
+
+  // Repair tracking
+  repairAttemptCount   Int         @default(0)
+  lastRepairAttemptAt  DateTime?
+  repairedAt           DateTime?
+  repairDetails        Json?
+
+  detectedAt           DateTime    @default(now())
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@index([schoolId])
+  @@index([driftType])
+  @@index([status])
+  @@index([entityType, entityId])
+  @@index([providerPaymentId])
+  @@index([detectedAt])
+  @@index([status, driftType])
+}
+
+model ReconciliationAuditEvent {
+  id                String                  @id @default(cuid())
+  schoolId          String?
+  eventType         ReconciliationEventType
+  driftRecordId     String?
+
+  // Context
+  entityType        String?
+  entityId          String?
+  providerPaymentId String?
+
+  // Event details
+  details           Json?
+  outcome           String?     // "success", "failure", "escalated"
+
+  createdAt         DateTime    @default(now())
+
+  @@index([schoolId])
+  @@index([eventType])
+  @@index([driftRecordId])
+  @@index([createdAt])
 }
